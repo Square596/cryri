@@ -62,7 +62,7 @@ cloud:
 
 ### Typical Use Case
 
-1. **Prepare Docker Image**  
+1. **Prepare Docker Image** (see recommendations below)
    - Build your Docker image, tag it with the `job-custom-image-` prefix, and push it to the cloud registry.  
    - Example: Use the image `job-custom-image-follower` or create your own with the required prefix.
 
@@ -107,3 +107,55 @@ Terminate a specific running job using its hash:
 ```bash
 cryri --kill b593837e6a55 --region SR006
 ```
+
+### Recommended workflow with uv + docker
+Instead of rebuilding/pushing a new Docker image for every dependency change, keep one shared CUDA base image with uv, and let uv create/update the project environment at job start.
+​
+To avoid a shared cache on the Jupyter server, always set UV_CACHE_DIR to a directory inside the project (e.g. ${PWD}/.cache/uv), which tells uv where to store its cache.
+
+#### Quickstart (from requirements.txt)
+From your project directory on the Jupyter server:
+
+```bash
+uv init --bare
+UV_CACHE_DIR="${PWD}/.cache/uv" uv add -r requirements.txt
+```
+
+From now on, dependency changes are done by editing pyproject.toml or running commands like:
+
+```bash
+UV_CACHE_DIR="${PWD}/.cache/uv" uv add <some-package>
+```
+
+Create `run_utils/run_init.sh`:
+
+```bash
+export UV_CACHE_DIR="${PWD}/.cache/uv" # set up uv cache dir
+uv cache dir # log cache dir (debug)
+uv sync # sync pyproject.toml <-> uv.lock <-> .venv
+uv pip freeze # log all dependencies (debug)
+```
+
+Add the script to your command to cryri configuration file:
+
+```
+command: bash run_utils/run_init.sh && uv run example.py --map_name test-mazes-s40_wc4_od30 --num_agents 128
+```
+
+if you want to use torchrun or just keep using python CLI:
+```
+command: bash run_utils/run_init.sh && source .venv/bin/activate && python3 example.py --map_name test-mazes-s40_wc4_od30 --num_agents 128
+
+# or
+
+command: bash run_utils/run_init.sh && source .venv/bin/activate && torchrun --nproc_per_node=8 train.py
+```
+
+#### Dockerfile example:
+
+```
+FROM cr.ai.cloud.ru/aicloud-base-images/cuda12.2-torch2-py310
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+```
+
+Now you can manage your python dependencies right from the Jupyter server. You don't have to create/push new docker images after each dependency change. Just use `UV_CACHE_DIR="${PWD}/.cache/uv" uv add <some-package>` and that's all.
