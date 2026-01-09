@@ -159,5 +159,3 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ```
 
 Now you can manage your python dependencies right from the Jupyter server. You don't have to create/push new docker images after each dependency change. Just use `UV_CACHE_DIR="${PWD}/.cache/uv" uv add <some-package>` and that's all.
-
-If you want to know about the recommended workflow in detail you can read or comment it [here](https://docs.google.com/document/d/15Bd0tLgwlQ5eBYG5hilf9dhJCbZj7YiNdG7UcNk-nmY/edit?usp=sharing)
