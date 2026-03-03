@@ -1,4 +1,0 @@
-pyyaml
-pydantic
-rich
-typer>=0.9.0
