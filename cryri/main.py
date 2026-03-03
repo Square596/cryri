@@ -3,7 +3,8 @@ from typing import Optional
 import typer
 import yaml
 
-from cryri import __version__
+from cryri import __version__, api
+from cryri.api import ApiError
 from cryri.config import CryConfig, CloudConfig
 from cryri.display import (
     console,
@@ -18,11 +19,6 @@ from cryri.display import (
 )
 from cryri.job_manager import JobManager, JobNotFoundError, ClientLibMissingError
 from cryri.utils import create_job_description, create_run_copy
-
-try:
-    import client_lib
-except ModuleNotFoundError:
-    client_lib = None
 
 app = typer.Typer(no_args_is_help=True, rich_markup_mode="rich")
 
@@ -58,18 +54,33 @@ def submit_run(cfg: CryConfig) -> str:
     quoted_command = cfg.container.command.replace('"', '\\"')
     run_script = f'bash -c "cd {cfg.container.work_dir} && {quoted_command}"'
 
-    job = client_lib.Job(
-        base_image=cfg.container.image,
+    if api.use_legacy_backend():
+        from cryri.job_manager import _require_client_lib
+        client_lib = _require_client_lib()
+        job = client_lib.Job(
+            base_image=cfg.container.image,
+            script=run_script,
+            instance_type=cfg.cloud.instance_type,
+            processes_per_worker=cfg.cloud.processes_per_worker,
+            n_workers=cfg.cloud.n_workers,
+            region=cfg.cloud.region,
+            type='binary',
+            env_variables=cfg.container.environment,
+            job_desc=job_description,
+        )
+        return job.submit()
+
+    result = api.submit_job(
         script=run_script,
+        base_image=cfg.container.image,
         instance_type=cfg.cloud.instance_type,
-        processes_per_worker=cfg.cloud.processes_per_worker,
-        n_workers=cfg.cloud.n_workers,
         region=cfg.cloud.region,
-        type='binary',
+        n_workers=cfg.cloud.n_workers,
+        processes_per_worker=cfg.cloud.processes_per_worker,
         env_variables=cfg.container.environment,
         job_desc=job_description,
     )
-    return job.submit()
+    return result.get("job_name", str(result))
 
 
 @app.command()
@@ -102,6 +113,9 @@ def submit(
         with console.status("[bold green]Submitting job...[/bold green]"):
             status = submit_run(cfg)
         print_success(f"Job submitted: {status}")
+    except (ApiError, ClientLibMissingError) as e:
+        print_error(f"Failed to submit job: {e}")
+        raise typer.Exit(code=1)
     except Exception as e:
         print_error(f"Failed to submit job: {e}")
         raise typer.Exit(code=1)
@@ -116,7 +130,7 @@ def jobs(
     try:
         with console.status("[bold green]Fetching jobs...[/bold green]"):
             structured = jm.get_jobs_structured()
-    except ClientLibMissingError as e:
+    except (ApiError, ClientLibMissingError) as e:
         print_error(str(e))
         raise typer.Exit(code=1)
 
@@ -139,7 +153,7 @@ def logs(
         try:
             with console.status("[bold green]Fetching jobs...[/bold green]"):
                 structured = jm.get_jobs_structured()
-        except ClientLibMissingError as e:
+        except (ApiError, ClientLibMissingError) as e:
             print_error(str(e))
             raise typer.Exit(code=1)
 
@@ -156,7 +170,7 @@ def logs(
     except JobNotFoundError as e:
         print_error(str(e))
         raise typer.Exit(code=1)
-    except ClientLibMissingError as e:
+    except (ApiError, ClientLibMissingError) as e:
         print_error(str(e))
         raise typer.Exit(code=1)
 
@@ -173,7 +187,7 @@ def kill(
         try:
             with console.status("[bold green]Fetching jobs...[/bold green]"):
                 structured = jm.get_jobs_structured()
-        except ClientLibMissingError as e:
+        except (ApiError, ClientLibMissingError) as e:
             print_error(str(e))
             raise typer.Exit(code=1)
 
@@ -190,7 +204,7 @@ def kill(
     except JobNotFoundError as e:
         print_error(str(e))
         raise typer.Exit(code=1)
-    except ClientLibMissingError as e:
+    except (ApiError, ClientLibMissingError) as e:
         print_error(str(e))
         raise typer.Exit(code=1)
 
@@ -231,7 +245,7 @@ def build_image(
             console.print(f"  Job name:  [cyan]{result['job_name']}[/cyan]")
         if result.get("new_image"):
             console.print(f"  New image: [cyan]{result['new_image']}[/cyan]")
-    except ClientLibMissingError as e:
+    except (ApiError, ClientLibMissingError) as e:
         print_error(str(e))
         raise typer.Exit(code=1)
     except Exception as e:
@@ -249,7 +263,21 @@ def instances(
         with console.status("[bold green]Fetching instance types...[/bold green]"):
             table = jm.get_instance_types()
         console.print(table)
-    except ClientLibMissingError as e:
+    except (ApiError, ClientLibMissingError) as e:
+        print_error(str(e))
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def images(
+    cluster_type: str = typer.Option("MT", "--type", "-t", help="Cluster type (MT or INF)."),
+):
+    """Show available Docker images."""
+    try:
+        with console.status("[bold green]Fetching images...[/bold green]"):
+            table = JobManager.get_images(cluster_type=cluster_type)
+        console.print(table)
+    except (ApiError, ClientLibMissingError) as e:
         print_error(str(e))
         raise typer.Exit(code=1)
 

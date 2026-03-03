@@ -1,23 +1,11 @@
 # pylint: disable=redefined-outer-name,wrong-import-position
 
-import sys
 import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch, MagicMock
 
 import yaml
 from cryri.config import CryConfig
-
-
-# Since client_lib might not be installed, mock it before importing cryri modules
-mock_client_lib = MagicMock()
-mock_job_instance = MagicMock()
-mock_job_instance.submit.return_value = "test_job_id_123"
-mock_client_lib.Job.return_value = mock_job_instance
-# Inject the mock into sys.modules
-sys.modules['client_lib'] = mock_client_lib
-
-# Now it's safe to import from cryri
-from cryri.main import submit_run  # noqa: E402
+from cryri.main import submit_run
 
 
 # Define the test configuration as a YAML string
@@ -35,33 +23,29 @@ cloud:
 """
 
 
-# Use the mock for the duration of the test function
-# This ensures the test doesn't rely on the actual client_lib
-@patch.dict(sys.modules, {'client_lib': mock_client_lib})
-def test_submit_run_executes_command():
+@patch("cryri.api.use_legacy_backend", return_value=False)
+@patch("cryri.api.submit_job")
+def test_submit_run_executes_command(mock_submit_job, _mock_legacy):
     """
     Tests if submit_run correctly formats and can execute the container command.
-    It mocks the client_lib.Job submission and instead runs the command locally
+    It mocks cryri.api.submit_job and instead runs the command locally
     using subprocess to check for basic execution errors.
     """
+    mock_submit_job.return_value = {"job_name": "test_job_id_123"}
+
     # Load config from YAML
     config_dict = yaml.safe_load(TEST_CONFIG_YAML)
     cfg = CryConfig(**config_dict)
-
-    # Reset mock calls before the test run
-    mock_client_lib.Job.reset_mock()
-    mock_job_instance.submit.reset_mock()
 
     # Call the function under test
     job_id = submit_run(cfg)
 
     # Assertions about the mock
     assert job_id == "test_job_id_123"
-    mock_client_lib.Job.assert_called_once()
-    mock_job_instance.submit.assert_called_once()
+    mock_submit_job.assert_called_once()
 
-    # Get the arguments passed to the Job constructor
-    _, kwargs = mock_client_lib.Job.call_args
+    # Get the arguments passed to submit_job
+    _, kwargs = mock_submit_job.call_args
 
     # Extract the script command
     script_command = kwargs.get('script')

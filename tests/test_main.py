@@ -1,7 +1,7 @@
 # pylint: disable=redefined-outer-name
 
-import sys
-from unittest.mock import MagicMock, patch
+import os
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -105,6 +105,7 @@ def test_help():
     assert "logs" in result.output
     assert "kill" in result.output
     assert "instances" in result.output
+    assert "images" in result.output
 
 
 def test_submit_missing_file():
@@ -114,26 +115,26 @@ def test_submit_missing_file():
     assert "not found" in result.output
 
 
-def test_jobs_without_client_lib():
+def test_jobs_api_error():
+    """Test jobs command when API returns an error."""
     from cryri.main import app
-    with patch("cryri.job_manager._require_client_lib") as mock_req:
-        from cryri.job_manager import ClientLibMissingError
-        mock_req.side_effect = ClientLibMissingError("client_lib is not installed.")
+    from cryri.api import ApiError
+    with patch("cryri.api.use_legacy_backend", return_value=False), \
+         patch("cryri.api.list_jobs", side_effect=ApiError(500, "connection refused")):
         result = runner.invoke(app, ["jobs"])
         assert result.exit_code == 1
-        assert "client_lib" in result.output
+        assert "500" in result.output
 
 
 def test_jobs_with_mock_data():
+    """Test jobs command with mock structured data from API."""
     from cryri.main import app
-    mock_client_lib = MagicMock()
-
-    def fake_jobs(region):
-        sys.stdout.write("my-job : abc123\nanother-job : def456\n")
-
-    mock_client_lib.jobs.side_effect = fake_jobs
-
-    with patch("cryri.job_manager._require_client_lib", return_value=mock_client_lib):
+    mock_jobs = [
+        {"created_at": "2024-01-01", "job_name": "my-job", "status": "abc123"},
+        {"created_at": "2024-01-02", "job_name": "another-job", "status": "def456"},
+    ]
+    with patch("cryri.api.use_legacy_backend", return_value=False), \
+         patch("cryri.api.list_jobs", return_value=mock_jobs):
         result = runner.invoke(app, ["jobs", "--region", "SR006"])
         assert result.exit_code == 0
         assert "my-job" in result.output

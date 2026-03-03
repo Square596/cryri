@@ -14,6 +14,7 @@ authors = [
 ]
 dependencies = [
     "pydantic",
+    "requests",
     "rich",
     "pyyaml",
     "typer>=0.9.0",
