@@ -51,18 +51,63 @@ def render_config_panel(cfg) -> Panel:
     return Panel(body, title="[bold cyan]Job Configuration[/bold cyan]", border_style="cyan")
 
 
+def render_build_image_panel(from_image: str, requirements_file: str,
+                             install_type: str, conda_env: str = None,
+                             poetrylock_file: str = None) -> Panel:
+    lines = [
+        f"[bold]Base image:[/bold]        {from_image}",
+        f"[bold]Requirements:[/bold]      {requirements_file}",
+        f"[bold]Install type:[/bold]      {install_type}",
+    ]
+    if conda_env:
+        lines.append(f"[bold]Conda env:[/bold]        {conda_env}")
+    if poetrylock_file:
+        lines.append(f"[bold]Poetry lock:[/bold]      {poetrylock_file}")
+
+    body = "\n".join(lines)
+    return Panel(body, title="[bold cyan]Image Build Configuration[/bold cyan]", border_style="cyan")
+
+
 def confirm_submission() -> bool:
     return Confirm.ask("[bold yellow]Submit this job?[/bold yellow]")
 
 
+STATUS_STYLES = {
+    "Running": "bold green",
+    "Completed": "dim",
+    "Failed": "bold red",
+    "Pending": "bold yellow",
+}
+
+
+def _format_created_at(iso_str: str) -> str:
+    if not iso_str:
+        return ""
+    try:
+        from datetime import datetime
+        dt = datetime.fromisoformat(iso_str)
+        return dt.strftime("%b %d %H:%M")
+    except (ValueError, TypeError):
+        return iso_str
+
+
 def render_jobs_table(jobs: List[Dict]) -> Table:
-    table = Table(title="Running Jobs", show_lines=False)
+    table = Table(title="Jobs", show_lines=False)
     table.add_column("#", style="dim", width=4)
-    table.add_column("Description", style="cyan")
-    table.add_column("Hash", style="green")
+    table.add_column("Job Name", style="cyan")
+    table.add_column("Created", style="dim")
+    table.add_column("Status")
 
     for job in jobs:
-        table.add_row(str(job["index"]), job["description"], job["hash"])
+        status = job.get("status", "")
+        style = STATUS_STYLES.get(status, "")
+        status_text = Text(status, style=style)
+        table.add_row(
+            str(job["index"]),
+            job["job_name"],
+            _format_created_at(job.get("created_at", "")),
+            status_text,
+        )
 
     return table
 
@@ -70,7 +115,11 @@ def render_jobs_table(jobs: List[Dict]) -> Table:
 def interactive_job_select(jobs: List[Dict], action: str) -> str:
     console.print(f"\n[bold]Select a job to {action}:[/bold]\n")
     for job in jobs:
-        console.print(f"  [dim]{job['index']}.[/dim] {job['description']}  [green]{job['hash']}[/green]")
+        status = job.get("status", "")
+        style = STATUS_STYLES.get(status, "")
+        console.print(
+            f"  [dim]{job['index']}.[/dim] [cyan]{job['job_name']}[/cyan]  [{style}]{status}[/{style}]"
+        )
     console.print()
 
     choice = IntPrompt.ask(
@@ -78,7 +127,7 @@ def interactive_job_select(jobs: List[Dict], action: str) -> str:
         choices=[str(j["index"]) for j in jobs],
     )
     selected = next(j for j in jobs if j["index"] == choice)
-    return selected["hash"]
+    return selected["job_name"]
 
 
 def print_success(msg: str) -> None:

@@ -40,25 +40,28 @@ class JobManager:
         result = []
         for i, raw in enumerate(raw_jobs, start=1):
             parts = raw.split(" : ")
-            if len(parts) >= 2:
+            if len(parts) >= 3:
                 result.append({
                     "index": i,
-                    "description": parts[0].strip(),
-                    "hash": parts[1].strip(),
+                    "created_at": parts[0].strip(),
+                    "job_name": parts[1].strip(),
+                    "status": parts[2].strip(),
+                })
+            elif len(parts) >= 2:
+                result.append({
+                    "index": i,
+                    "created_at": "",
+                    "job_name": parts[0].strip(),
+                    "status": parts[1].strip(),
                 })
         return result
 
     def find_job_by_hash(self, partial_hash: str) -> Optional[str]:
-        """Find a job by partial hash match. Returns full hash if found."""
-        for job_name in self.get_jobs():
-            job_hash = self.raw_job_to_id(job_name)
-            if partial_hash in job_hash:
-                return job_hash
+        """Find a job by partial hash match. Returns full job_name if found."""
+        for job in self.get_jobs_structured():
+            if partial_hash in job["job_name"]:
+                return job["job_name"]
         return None
-
-    @staticmethod
-    def raw_job_to_id(job_string: str) -> str:
-        return job_string.split(" : ")[1].strip()
 
     def get_instance_types(self):
         client_lib = _require_client_lib()
@@ -84,3 +87,22 @@ class JobManager:
         client_lib.kill(full_hash, region=self.region)
         logging.info("Job %s terminated successfully", full_hash)
         return full_hash
+
+    @staticmethod
+    def build_image(from_image: str, requirements_file: str,
+                    install_type: str = "pip", conda_env: Optional[str] = None,
+                    poetrylock_file: Optional[str] = None) -> Dict:
+        client_lib = _require_client_lib()
+        job = client_lib.ImageBuildJob(
+            from_image=from_image,
+            requirements_file=requirements_file,
+            install_type=install_type,
+            conda_env=conda_env,
+            poetrylock_file=poetrylock_file,
+        )
+        result = job.submit()
+        return {
+            "result": result,
+            "job_name": job.job_name,
+            "new_image": job.new_image,
+        }

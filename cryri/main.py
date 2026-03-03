@@ -9,6 +9,7 @@ from cryri.display import (
     console,
     setup_logging,
     render_config_panel,
+    render_build_image_panel,
     confirm_submission,
     render_jobs_table,
     interactive_job_select,
@@ -191,6 +192,50 @@ def kill(
         raise typer.Exit(code=1)
     except ClientLibMissingError as e:
         print_error(str(e))
+        raise typer.Exit(code=1)
+
+
+@app.command("build-image")
+def build_image(
+    requirements_file: str = typer.Argument(..., help="Path to requirements.txt, pyproject.toml, or environment.yml."),
+    image: str = typer.Option(..., "--image", help="Base Docker image to extend."),
+    install_type: str = typer.Option("pip", "--type", help="Install method: pip / conda / poetry."),
+    conda_env: Optional[str] = typer.Option(None, "--conda-env", help="Conda environment name to activate before installing."),
+    poetry_lock: Optional[str] = typer.Option(None, "--poetry-lock", help="Path to poetry.lock file (poetry type only)."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt (for CI)."),
+):
+    """Build a custom Docker image by installing packages on top of a base image."""
+    import os
+
+    if not os.path.isfile(requirements_file):
+        print_error(f"Requirements file '{requirements_file}' not found.")
+        raise typer.Exit(code=1)
+
+    console.print(render_build_image_panel(image, requirements_file, install_type, conda_env, poetry_lock))
+
+    if not yes and not confirm_submission():
+        print_error("Build cancelled.")
+        raise typer.Exit()
+
+    try:
+        with console.status("[bold green]Submitting image build...[/bold green]"):
+            result = JobManager.build_image(
+                from_image=image,
+                requirements_file=requirements_file,
+                install_type=install_type,
+                conda_env=conda_env,
+                poetrylock_file=poetry_lock,
+            )
+        print_success(f"Image build submitted: {result['result']}")
+        if result.get("job_name"):
+            console.print(f"  Job name:  [cyan]{result['job_name']}[/cyan]")
+        if result.get("new_image"):
+            console.print(f"  New image: [cyan]{result['new_image']}[/cyan]")
+    except ClientLibMissingError as e:
+        print_error(str(e))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        print_error(f"Failed to submit image build: {e}")
         raise typer.Exit(code=1)
 
 
