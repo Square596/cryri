@@ -49,7 +49,7 @@ setup(
         "pydantic",
         "rich",
         "pyyaml",
-        "argparse",
+        "typer>=0.9.0",
     ],
     extras_require={
         'test': ['pytest'],

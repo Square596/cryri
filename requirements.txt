@@ -1,4 +1,4 @@
 pyyaml
 pydantic
-argparse
 rich
+typer>=0.9.0

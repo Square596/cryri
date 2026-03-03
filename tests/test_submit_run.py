@@ -69,25 +69,15 @@ def test_submit_run_executes_command():
     assert script_command.startswith('bash -c "cd ')
 
     # Execute the script command using subprocess
-    # We run the full 'bash -c "cd ... && command"' string
-    # check=False allows us to inspect stderr even if it fails
-    # shell=True is necessary because we are running a shell command string
     result = subprocess.run(
         script_command,
         shell=True,
         capture_output=True,
         text=True,
-        check=False  # Don't raise exception on non-zero exit
+        check=False
     )
 
     # Check subprocess results
-    # Ensure the command ran without errors
     assert result.returncode == 0, f"Subprocess failed with stderr: {result.stderr}"
-    # Ensure there was no output to stderr
     assert result.stderr == "", f"Subprocess produced stderr: {result.stderr}"
-    # Optionally check stdout
     assert "double quotes" in result.stdout
-
-# Reset the mock in sys.modules after tests if necessary,
-# though usually test runners isolate tests.
-# del sys.modules['client_lib']

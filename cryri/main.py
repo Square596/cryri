@@ -1,19 +1,48 @@
-import argparse
-import importlib
-import logging
+from typing import Optional
 
+import typer
 import yaml
 
+from cryri import __version__
 from cryri.config import CryConfig, CloudConfig
-from cryri.job_manager import JobManager
-from cryri.utils import (
-    create_job_description, create_run_copy
+from cryri.display import (
+    console,
+    setup_logging,
+    render_config_panel,
+    confirm_submission,
+    render_jobs_table,
+    interactive_job_select,
+    print_success,
+    print_error,
 )
+from cryri.job_manager import JobManager, JobNotFoundError, ClientLibMissingError
+from cryri.utils import create_job_description, create_run_copy
 
 try:
     import client_lib
 except ModuleNotFoundError:
-    logging.warning("client_lib not found. Some functionality may be limited.")
+    client_lib = None
+
+app = typer.Typer(no_args_is_help=True, rich_markup_mode="rich")
+
+
+def _version_callback(value: bool):
+    if value:
+        console.print(f"cryri [bold cyan]{__version__}[/bold cyan]")
+        raise typer.Exit()
+
+
+@app.callback()
+def callback(
+    version: bool = typer.Option(
+        False, "--version", "-v",
+        help="Show cryri version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+):
+    """[bold cyan]cryri[/bold cyan] — Cloud job runner CLI."""
+    setup_logging()
 
 
 def submit_run(cfg: CryConfig) -> str:
@@ -24,151 +53,164 @@ def submit_run(cfg: CryConfig) -> str:
         cfg.container.work_dir = create_run_copy(cfg.container)
 
     job_description = create_job_description(cfg)
-    logging.info("Submitting job with description: %s", job_description)
 
+    quoted_command = cfg.container.command.replace('"', '\\"')
+    run_script = f'bash -c "cd {cfg.container.work_dir} && {quoted_command}"'
+
+    job = client_lib.Job(
+        base_image=cfg.container.image,
+        script=run_script,
+        instance_type=cfg.cloud.instance_type,
+        processes_per_worker=cfg.cloud.processes_per_worker,
+        n_workers=cfg.cloud.n_workers,
+        region=cfg.cloud.region,
+        type='binary',
+        env_variables=cfg.container.environment,
+        job_desc=job_description,
+    )
+    return job.submit()
+
+
+@app.command()
+def submit(
+    config_file: str = typer.Argument(..., help="Path to the YAML configuration file."),
+    region: Optional[str] = typer.Option(None, "--region", "-r", help="Cloud region override."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt (for CI)."),
+):
+    """Submit a job from a YAML config file."""
     try:
-        quoted_command = cfg.container.command.replace('"', '\\"')
-        run_script = f'bash -c "cd {cfg.container.work_dir} && {quoted_command}"'
-
-        job = client_lib.Job(
-            base_image=cfg.container.image,
-            script=run_script,
-            instance_type=cfg.cloud.instance_type,
-            processes_per_worker=cfg.cloud.processes_per_worker,
-            n_workers=cfg.cloud.n_workers,
-            region=cfg.cloud.region,
-            type='binary',
-            env_variables=cfg.container.environment,
-            job_desc=job_description,
-        )
-        return job.submit()
-    except Exception as e:
-        logging.error("Failed to submit job: %s", e)
-        raise
-
-
-def _config_from_args(args):
-    cloud_cfg = CloudConfig()
-    if args.region is not None:
-        cloud_cfg.region = args.region
-
-    cfg = CryConfig(cloud=cloud_cfg)
-    return cfg
-
-
-def _handle_config_file(config_file: str) -> None:
-    """Handle the configuration file processing and job submission."""
-    logging.info("Running configuration from: %s", config_file)
-    try:
-        with open(config_file, "r", encoding="utf-8") as file:
-            cfg = CryConfig(**yaml.safe_load(file))
-            status = submit_run(cfg)
-            logging.info("Job submitted with status: %s", status)
+        with open(config_file, "r", encoding="utf-8") as f:
+            cfg = CryConfig(**yaml.safe_load(f))
     except FileNotFoundError:
-        logging.error("Configuration file '%s' not found.", config_file)
+        print_error(f"Configuration file '{config_file}' not found.")
+        raise typer.Exit(code=1)
     except yaml.YAMLError as e:
-        logging.error("Error parsing YAML file: %s", e)
+        print_error(f"Error parsing YAML file: {e}")
+        raise typer.Exit(code=1)
 
+    if region:
+        cfg.cloud.region = region
 
-def get_instance_types(region):
-    return client_lib.get_instance_types(regions=region)
+    console.print(render_config_panel(cfg))
 
+    if not yes and not confirm_submission():
+        print_error("Submission cancelled.")
+        raise typer.Exit()
 
-def _setup_arg_parser():
-    """Set up and return the argument parser."""
-    parser = argparse.ArgumentParser(description="Script for managing runs and logs.")
-
-    # Default mode: Run configuration from a YAML file
-    parser.add_argument(
-        "config_file",
-        nargs="?",
-        default=None,
-        help="Path to the YAML configuration file for the run. This is the default option."
-    )
-
-    # Option 1: Show logs
-    parser.add_argument(
-        "--logs",
-        metavar="HASH",
-        help="Provide the hash of the container to display its logs."
-    )
-
-    # Option 2: Show runned jobs
-    parser.add_argument(
-        "--jobs",
-        action="store_true",
-        help="Display a list of runned jobs."
-    )
-
-    # Option 3: Kill job
-    parser.add_argument(
-        "--kill",
-        metavar="HASH",
-        help="Provide the hash of the job to terminate it."
-    )
-
-    parser.add_argument(
-        "--instance_types",
-        action="store_true",
-        help="Display types of available instances."
-    )
-
-    parser.add_argument(
-        "--region",
-        metavar="SR004 / SR006",
-        help="Provide cloud region."
-    )
-
-    parser.add_argument('--version', action='store_true', help="Show version of cryri")
-
-    return parser
-
-
-def _check_version():
-    """Check and print the version of cryri."""
     try:
-        version = importlib.metadata.version("cryri")
-        print(version)
-    except importlib.metadata.PackageNotFoundError:
-        print("Cryri package not found.")
+        with console.status("[bold green]Submitting job...[/bold green]"):
+            status = submit_run(cfg)
+        print_success(f"Job submitted: {status}")
+    except Exception as e:
+        print_error(f"Failed to submit job: {e}")
+        raise typer.Exit(code=1)
 
 
-def _execute_command(args, job_manager):
-    """Execute the appropriate command based on the provided arguments."""
-    if args.logs:
-        job_manager.show_logs(args.logs)
-    elif args.instance_types:
-        instance_types_table = job_manager.get_instance_types()
-        job_manager.console.print(instance_types_table)
-    elif args.jobs:
-        for job in job_manager.get_jobs():
-            print(job)
-    elif args.kill:
-        job_manager.kill_job(args.kill)
-    elif args.config_file:
-        _handle_config_file(args.config_file)
-    else:
-        logging.warning("No valid arguments provided. Use --help for more information.")
+@app.command()
+def jobs(
+    region: str = typer.Option("SR006", "--region", "-r", help="Cloud region."),
+):
+    """List running jobs."""
+    jm = JobManager(region)
+    try:
+        with console.status("[bold green]Fetching jobs...[/bold green]"):
+            structured = jm.get_jobs_structured()
+    except ClientLibMissingError as e:
+        print_error(str(e))
+        raise typer.Exit(code=1)
+
+    if not structured:
+        console.print("[dim]No jobs found.[/dim]")
+        raise typer.Exit()
+
+    console.print(render_jobs_table(structured))
+
+
+@app.command()
+def logs(
+    hash: Optional[str] = typer.Argument(None, help="Job hash (interactive selection if omitted)."),
+    region: str = typer.Option("SR006", "--region", "-r", help="Cloud region."),
+):
+    """Show logs for a job."""
+    jm = JobManager(region)
+
+    if hash is None:
+        try:
+            with console.status("[bold green]Fetching jobs...[/bold green]"):
+                structured = jm.get_jobs_structured()
+        except ClientLibMissingError as e:
+            print_error(str(e))
+            raise typer.Exit(code=1)
+
+        if not structured:
+            console.print("[dim]No jobs found.[/dim]")
+            raise typer.Exit()
+
+        hash = interactive_job_select(structured, "view logs")
+
+    try:
+        with console.status("[bold green]Fetching logs...[/bold green]"):
+            output = jm.show_logs(hash)
+        console.print(output)
+    except JobNotFoundError as e:
+        print_error(str(e))
+        raise typer.Exit(code=1)
+    except ClientLibMissingError as e:
+        print_error(str(e))
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def kill(
+    hash: Optional[str] = typer.Argument(None, help="Job hash (interactive selection if omitted)."),
+    region: str = typer.Option("SR006", "--region", "-r", help="Cloud region."),
+):
+    """Kill a running job."""
+    jm = JobManager(region)
+
+    if hash is None:
+        try:
+            with console.status("[bold green]Fetching jobs...[/bold green]"):
+                structured = jm.get_jobs_structured()
+        except ClientLibMissingError as e:
+            print_error(str(e))
+            raise typer.Exit(code=1)
+
+        if not structured:
+            console.print("[dim]No jobs found.[/dim]")
+            raise typer.Exit()
+
+        hash = interactive_job_select(structured, "kill")
+
+    try:
+        with console.status("[bold green]Terminating job...[/bold green]"):
+            full_hash = jm.kill_job(hash)
+        print_success(f"Job {full_hash} terminated successfully.")
+    except JobNotFoundError as e:
+        print_error(str(e))
+        raise typer.Exit(code=1)
+    except ClientLibMissingError as e:
+        print_error(str(e))
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def instances(
+    region: str = typer.Option("SR006", "--region", "-r", help="Cloud region."),
+):
+    """Show available instance types."""
+    jm = JobManager(region)
+    try:
+        with console.status("[bold green]Fetching instance types...[/bold green]"):
+            table = jm.get_instance_types()
+        console.print(table)
+    except ClientLibMissingError as e:
+        print_error(str(e))
+        raise typer.Exit(code=1)
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-    parser = _setup_arg_parser()
-    args = parser.parse_args()
-
-    if args.version:
-        _check_version()
-        return
-
-    cfg = _config_from_args(args)
-    job_manager = JobManager(cfg.cloud.region)
-
-    try:
-        _execute_command(args, job_manager)
-    except Exception as e:
-        logging.error("An error occurred: %s", e)
-        raise
+    app()
 
 
 if __name__ == '__main__':

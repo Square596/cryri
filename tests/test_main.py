@@ -1,6 +1,10 @@
 # pylint: disable=redefined-outer-name
 
+import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
+from typer.testing import CliRunner
 
 from cryri.config import CryConfig, ContainerConfig, CloudConfig
 from cryri.job_manager import JobManager
@@ -8,6 +12,8 @@ from cryri.utils import (
     create_job_description
 )
 from tests.utils.mocks import mock_path_resolution, make_is_dir_mock, mock_env_vars
+
+runner = CliRunner()
 
 
 @pytest.fixture
@@ -81,3 +87,54 @@ def test_container_config_expand_resolve_fields_validators():
     }
     assert config.work_dir == "/mock/fake_dir"
     assert config.cry_copy_dir == "/mock/fake_user/sub_user/.cryri"
+
+
+def test_version():
+    from cryri.main import app
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert "0.2.0" in result.output
+
+
+def test_help():
+    from cryri.main import app
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "submit" in result.output
+    assert "jobs" in result.output
+    assert "logs" in result.output
+    assert "kill" in result.output
+    assert "instances" in result.output
+
+
+def test_submit_missing_file():
+    from cryri.main import app
+    result = runner.invoke(app, ["submit", "nonexistent.yaml"])
+    assert result.exit_code == 1
+    assert "not found" in result.output
+
+
+def test_jobs_without_client_lib():
+    from cryri.main import app
+    with patch("cryri.job_manager._require_client_lib") as mock_req:
+        from cryri.job_manager import ClientLibMissingError
+        mock_req.side_effect = ClientLibMissingError("client_lib is not installed.")
+        result = runner.invoke(app, ["jobs"])
+        assert result.exit_code == 1
+        assert "client_lib" in result.output
+
+
+def test_jobs_with_mock_data():
+    from cryri.main import app
+    mock_client_lib = MagicMock()
+
+    def fake_jobs(region):
+        sys.stdout.write("my-job : abc123\nanother-job : def456\n")
+
+    mock_client_lib.jobs.side_effect = fake_jobs
+
+    with patch("cryri.job_manager._require_client_lib", return_value=mock_client_lib):
+        result = runner.invoke(app, ["jobs", "--region", "SR006"])
+        assert result.exit_code == 0
+        assert "my-job" in result.output
+        assert "abc123" in result.output
