@@ -1,7 +1,9 @@
+from pathlib import Path
 from typing import Optional
 
 import typer
 import yaml
+from rich.prompt import Confirm
 
 from cryri import __version__
 from cryri.api import ApiError
@@ -114,24 +116,14 @@ def init(
     console.print(render_config_panel(cfg))
     console.print()
 
-    save_path = prompt_text("Save config to", default=output)
+    if Path(output).exists():
+        if not Confirm.ask(f"[yellow]{output}[/yellow] already exists. Overwrite?", default=False):
+            console.print("[dim]Cancelled.[/dim]")
+            raise typer.Exit()
 
-    with open(save_path, "w", encoding="utf-8") as f:
+    with open(output, "w", encoding="utf-8") as f:
         yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
-    print_success(f"Config saved to {save_path}")
-
-    if confirm_submission():
-        try:
-            jm = JobManager(cfg.cloud.region)
-            with console.status("[bold green]Submitting job...[/bold green]"):
-                status = jm.submit_run(cfg)
-            print_success(f"Job submitted: {status}")
-        except (ApiError, ClientLibMissingError) as e:
-            print_error(f"Failed to submit job: {e}")
-            raise typer.Exit(code=1)
-        except Exception as e:
-            print_error(f"Failed to submit job: {e}")
-            raise typer.Exit(code=1)
+    print_success(f"Config saved to {output}")
 
 
 @app.command()
