@@ -77,8 +77,15 @@ def init(
     cwd = Path.cwd()
     default_description = f"{cwd.parent.name}-{cwd.name}"
 
+    COMMAND_CHOICES = [
+        "python3 main.py",
+        "bash run.sh",
+    ]
     IMAGE_CHOICES = [
         "cr.ai.cloud.ru/aicloud-base-images/cuda12.1-torch2-py311:0.0.36",
+    ]
+    WORKDIR_CHOICES = [
+        ".",
     ]
     INSTANCE_CHOICES = [
         "cpu.2C.8G",
@@ -87,17 +94,20 @@ def init(
     REGION_CHOICES = [
         DEFAULT_REGION,
     ]
+    DESCRIPTION_CHOICES = [
+        default_description,
+    ]
 
-    command = prompt_text("Command to run", default="python3 main.py")
+    command = prompt_select("Command to run", COMMAND_CHOICES)
     if not command:
         print_error("Command is required.")
         raise typer.Exit(code=1)
 
     image = prompt_select("Docker image", IMAGE_CHOICES)
-    work_dir = prompt_text("Working directory", default=".")
+    work_dir = prompt_select("Working directory", WORKDIR_CHOICES)
     instance_type = prompt_select("Instance type", INSTANCE_CHOICES)
     region = prompt_select("Region", REGION_CHOICES)
-    description = prompt_text("Description", default=default_description)
+    description = prompt_select("Description", DESCRIPTION_CHOICES)
 
     # Build config dict
     container = {"command": command, "image": image, "work_dir": work_dir or ".", "run_from_copy": False}

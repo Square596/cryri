@@ -207,7 +207,12 @@ def get_instance_types(regions: str) -> Table:
     table.add_column("Memory", justify="right")
 
     for cluster in resp.json():
+        # Only show clusters that support training jobs (mt)
+        if not cluster.get("mt", False):
+            continue
         cluster_key = cluster.get("cluster_key", "")
+        if regions and cluster_key != regions:
+            continue
         resp2 = requests.get(
             f"{base}/v1/clusters/{cluster_key}/instance_types",
             headers=headers,
@@ -215,10 +220,20 @@ def get_instance_types(regions: str) -> Table:
         )
         if resp2.status_code != 200:
             continue
-        for it in resp2.json().get("instance_types", []):
+        instance_types = resp2.json().get("instance_types", [])
+        # Filter out free tier
+        instance_types = [it for it in instance_types if it.get("key", "") != "free.0gpu"]
+        # Sort: cpu first, then by gpu count
+        instance_types.sort(
+            key=lambda x: int(x.get("key", "").startswith("a100")) * 100
+            + (x.get("key", "").startswith("cpu")) * 1000
+            + len(x.get("key", "")) * 10
+            + int(x.get("gpu", 0)),
+        )
+        for it in instance_types:
             table.add_row(
                 cluster_key,
-                it.get("name", ""),
+                it.get("key", ""),
                 str(it.get("gpu", "")),
                 str(it.get("cpu", "")),
                 str(it.get("memory", "")),
