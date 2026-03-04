@@ -70,6 +70,27 @@ def prompt_text(label: str, default: str = None) -> str:
     return Prompt.ask(f"  [bold]{label}[/bold]", default=default) or ""
 
 
+def prompt_select(label: str, choices: List[str], custom_label: str = "Custom...") -> str:
+    """Arrow-key selection menu with an option to type a custom value."""
+    from simple_term_menu import TerminalMenu
+
+    console.print(f"  [bold]{label}[/bold]")
+    options = choices + [custom_label]
+    menu = TerminalMenu(
+        options,
+        menu_cursor_style=("fg_cyan", "bold"),
+        menu_highlight_style=("fg_cyan", "bold"),
+    )
+    idx = menu.show()
+    if idx is None:
+        # User pressed Escape
+        return choices[0]
+    if idx == len(choices):
+        # Custom option selected
+        return prompt_text(label)
+    return choices[idx]
+
+
 def prompt_env_vars() -> Dict[str, str]:
     """Prompt for KEY=VALUE environment variables until empty input."""
     console.print("  [bold]Environment variables[/bold] (KEY=VALUE, empty line to finish):")

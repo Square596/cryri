@@ -18,6 +18,7 @@ from cryri.display import (
     print_success,
     print_error,
     prompt_text,
+    prompt_select,
     prompt_env_vars,
 )
 from cryri.job_manager import JobManager, JobNotFoundError, ClientLibMissingError
@@ -78,32 +79,19 @@ def init(
     default_description = f"{cwd.parent.name}-{cwd.name}"
 
     DEFAULT_IMAGE = "cr.ai.cloud.ru/aicloud-base-images/cuda12.1-torch2-py311:0.0.36"
-    INSTANCE_PRESETS = {
-        "1": "cpu.2C.8G",
-        "2": "a100plus.1gpu.80vG.12C.96G",
-    }
+    INSTANCE_CHOICES = [
+        "cpu.2C.8G",
+        "a100plus.1gpu.80vG.12C.96G",
+    ]
 
     command = prompt_text("Command to run", default="python3 main.py")
     if not command:
         print_error("Command is required.")
         raise typer.Exit(code=1)
 
-    # If using default main.py and it doesn't exist, create a starter script
-    if command == "python3 main.py" and not Path("main.py").exists():
-        Path("main.py").write_text(
-            'import os\n\nprint("Hello from cryri!")\nprint(f"Running on {os.uname().nodename}")\n'
-        )
-        print_success("Created main.py")
-
     image = prompt_text("Docker image", default=DEFAULT_IMAGE)
     work_dir = prompt_text("Working directory", default=".")
-
-    console.print("  [bold]Instance type:[/bold]")
-    for key, val in INSTANCE_PRESETS.items():
-        console.print(f"    [cyan]{key}[/cyan]) {val}")
-    instance_choice = prompt_text("Choose (1-2) or enter custom", default="1")
-    instance_type = INSTANCE_PRESETS.get(instance_choice, instance_choice)
-
+    instance_type = prompt_select("Instance type", INSTANCE_CHOICES)
     region = prompt_text("Region", default=DEFAULT_REGION)
     description = prompt_text("Description", default=default_description)
     environment = prompt_env_vars()
@@ -115,7 +103,7 @@ def init(
 
     cloud = {
         "description": description or default_description,
-        "instance_type": instance_type or DEFAULT_INSTANCE,
+        "instance_type": instance_type,
         "n_workers": 1,
     }
     if region and region != DEFAULT_REGION:
@@ -141,6 +129,13 @@ def init(
     with open(output, "w", encoding="utf-8") as f:
         yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
     print_success(f"Config saved to {output}")
+
+    # Create starter main.py if using default command and it doesn't exist
+    if command == "python3 main.py" and not Path("main.py").exists():
+        Path("main.py").write_text(
+            'import os\n\nprint("Hello from cryri!")\nprint(f"Running on {os.uname().nodename}")\n'
+        )
+        print_success("Created starter main.py")
 
 
 @app.command()
