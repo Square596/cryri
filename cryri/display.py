@@ -80,15 +80,18 @@ STATUS_STYLES = {
 }
 
 
-def _format_created_at(iso_str: str) -> str:
-    if not iso_str:
+def _format_created_at(value) -> str:
+    if not value:
         return ""
+    from datetime import datetime
     try:
-        from datetime import datetime
-        dt = datetime.fromisoformat(iso_str)
+        if isinstance(value, (int, float)):
+            dt = datetime.fromtimestamp(value)
+        else:
+            dt = datetime.fromisoformat(str(value))
         return dt.strftime("%b %d %H:%M")
-    except (ValueError, TypeError):
-        return str(iso_str)
+    except (ValueError, TypeError, OSError):
+        return str(value)
 
 
 def render_jobs_table(jobs: List[Dict]) -> Table:
