@@ -1,10 +1,17 @@
 """Built-in API client for cryri — replaces client_lib dependency."""
 
 import os
+import re
 from typing import Optional, List, Dict
 
 import requests
 from rich.table import Table
+
+# Patterns for log cleaning
+_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*")
+_MPI_PREFIX_RE = re.compile(r"^\[\d+,\d+\]<std(?:out|err)>:")
+_TQDM_RE = re.compile(r"\s*\d+%\|.*\|\s*\d+/\d+\s*\[.*\]")
+_NCCL_NOISE = ("NCCL INFO",)
 
 
 class ApiError(Exception):
@@ -104,11 +111,23 @@ def list_jobs(region: Optional[str] = None) -> List[dict]:
     return jobs
 
 
+def _clean_log_line(line: str) -> Optional[str]:
+    """Strip timestamps, MPI prefixes, and tqdm bars from a log line."""
+    line = _TIMESTAMP_RE.sub("", line)
+    line = _MPI_PREFIX_RE.sub("", line)
+    if any(noise in line for noise in _NCCL_NOISE):
+        return None
+    line = _TQDM_RE.sub("", line)
+    line = line.strip()
+    return line or None
+
+
 def stream_logs(
     job_name: str,
     region: Optional[str] = None,
     tail: int = 0,
     verbose: bool = True,
+    raw: bool = False,
 ) -> None:
     """Stream logs for a job directly to stdout."""
     payload: Dict = {
@@ -126,9 +145,19 @@ def stream_logs(
     )
     if resp.status_code != 200:
         raise ApiError(resp.status_code, resp.text)
+    prev_line = None
     for chunk in resp.iter_lines():
-        if chunk:
-            print(chunk.decode("utf-8"))
+        if not chunk:
+            continue
+        line = chunk.decode("utf-8")
+        if raw:
+            print(line)
+            continue
+        cleaned = _clean_log_line(line)
+        if cleaned is None or cleaned == prev_line:
+            continue
+        prev_line = cleaned
+        print(cleaned)
 
 
 def kill_job(job_name: str, region: str) -> str:

@@ -145,6 +145,7 @@ def jobs(
 def logs(
     hash: Optional[str] = typer.Argument(None, help="Job hash (interactive selection if omitted)."),
     region: str = typer.Option("SR006", "--region", "-r", help="Cloud region."),
+    raw: bool = typer.Option(False, "--raw", help="Show raw unfiltered logs."),
 ):
     """Show logs for a job."""
     jm = JobManager(region)
@@ -164,7 +165,7 @@ def logs(
         hash = interactive_job_select(structured, "view logs")
 
     try:
-        jm.show_logs(hash)
+        jm.show_logs(hash, raw=raw)
     except JobNotFoundError as e:
         print_error(str(e))
         raise typer.Exit(code=1)
