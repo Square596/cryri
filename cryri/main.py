@@ -73,42 +73,43 @@ def init(
     """Interactive wizard to create a job config file."""
     console.print("\n  [bold cyan]Welcome to cryri![/bold cyan] Let's set up your job.\n")
 
-    command = prompt_text("Command to run")
+    # Derive default description from parent_dir-current_dir
+    cwd = Path.cwd()
+    default_description = f"{cwd.parent.name}-{cwd.name}"
+
+    DEFAULT_IMAGE = "cr.ai.cloud.ru/aicloud-base-images/cuda12.1-torch2-py311:0.0.36"
+    DEFAULT_INSTANCE = "cpu.2C.8G"
+
+    command = prompt_text("Command to run", default="python3 main.py")
     if not command:
         print_error("Command is required.")
         raise typer.Exit(code=1)
 
+    image = prompt_text("Docker image", default=DEFAULT_IMAGE)
     work_dir = prompt_text("Working directory", default=".")
-    instance_type = prompt_text("Instance type (leave blank to skip)")
-    image = prompt_text("Docker image (leave blank to skip)")
+    instance_type = prompt_text("Instance type", default=DEFAULT_INSTANCE)
     region = prompt_text("Region", default=DEFAULT_REGION)
-    description = prompt_text("Description (leave blank to skip)")
+    description = prompt_text("Description", default=default_description)
     environment = prompt_env_vars()
 
-    # Build config dict — only include non-empty values
-    container = {"command": command}
-    if work_dir and work_dir != ".":
-        container["work_dir"] = work_dir
-    if image:
-        container["image"] = image
+    # Build config dict
+    container = {"command": command, "image": image, "work_dir": work_dir or ".", "run_from_copy": False}
     if environment:
         container["environment"] = environment
 
-    cloud = {}
+    cloud = {
+        "description": description or default_description,
+        "instance_type": instance_type or DEFAULT_INSTANCE,
+        "n_workers": 1,
+    }
     if region and region != DEFAULT_REGION:
         cloud["region"] = region
-    if instance_type:
-        cloud["instance_type"] = instance_type
-    if description:
-        cloud["description"] = description
 
-    config_dict = {"container": container}
-    if cloud:
-        config_dict["cloud"] = cloud
+    config_dict = {"container": container, "cloud": cloud}
 
     # Build CryConfig for display
     cfg = CryConfig(**{
-        "container": {**container, "work_dir": work_dir or "."},
+        "container": {**container},
         "cloud": {**cloud, "region": region or DEFAULT_REGION},
     })
 
@@ -168,6 +169,7 @@ def submit(
 @app.command()
 def jobs(
     region: str = typer.Option(DEFAULT_REGION, "--region", "-r", help="Cloud region."),
+    limit: int = typer.Option(10, "--limit", "-n", help="Number of latest jobs to show (0 for all)."),
 ):
     """List running jobs."""
     jm = JobManager(region)
@@ -181,6 +183,11 @@ def jobs(
     if not structured:
         console.print("[dim]No jobs found.[/dim]")
         raise typer.Exit()
+
+    total = len(structured)
+    if limit > 0 and total > limit:
+        structured = structured[-limit:]
+        console.print(f"[dim]Showing {limit} of {total} jobs. Use -n 0 to show all.[/dim]\n")
 
     console.print(render_jobs_table(structured))
 
