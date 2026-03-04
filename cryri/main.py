@@ -19,7 +19,6 @@ from cryri.display import (
     print_error,
     prompt_text,
     prompt_select,
-    prompt_env_vars,
 )
 from cryri.job_manager import JobManager, JobNotFoundError, ClientLibMissingError
 
@@ -78,10 +77,15 @@ def init(
     cwd = Path.cwd()
     default_description = f"{cwd.parent.name}-{cwd.name}"
 
-    DEFAULT_IMAGE = "cr.ai.cloud.ru/aicloud-base-images/cuda12.1-torch2-py311:0.0.36"
+    IMAGE_CHOICES = [
+        "cr.ai.cloud.ru/aicloud-base-images/cuda12.1-torch2-py311:0.0.36",
+    ]
     INSTANCE_CHOICES = [
         "cpu.2C.8G",
         "a100plus.1gpu.80vG.12C.96G",
+    ]
+    REGION_CHOICES = [
+        DEFAULT_REGION,
     ]
 
     command = prompt_text("Command to run", default="python3 main.py")
@@ -89,17 +93,14 @@ def init(
         print_error("Command is required.")
         raise typer.Exit(code=1)
 
-    image = prompt_text("Docker image", default=DEFAULT_IMAGE)
+    image = prompt_select("Docker image", IMAGE_CHOICES)
     work_dir = prompt_text("Working directory", default=".")
     instance_type = prompt_select("Instance type", INSTANCE_CHOICES)
-    region = prompt_text("Region", default=DEFAULT_REGION)
+    region = prompt_select("Region", REGION_CHOICES)
     description = prompt_text("Description", default=default_description)
-    environment = prompt_env_vars()
 
     # Build config dict
     container = {"command": command, "image": image, "work_dir": work_dir or ".", "run_from_copy": False}
-    if environment:
-        container["environment"] = environment
 
     cloud = {
         "description": description or default_description,
@@ -126,8 +127,15 @@ def init(
             console.print("[dim]Cancelled.[/dim]")
             raise typer.Exit()
 
+    # Write YAML with commented environment template
     with open(output, "w", encoding="utf-8") as f:
         yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
+        f.write(
+            "\n"
+            "# Environment variables (uncomment and edit as needed):\n"
+            "#   environment:\n"
+            "#     HF_TOKEN: your-token-here\n"
+        )
     print_success(f"Config saved to {output}")
 
     # Create starter main.py if using default command and it doesn't exist
@@ -212,11 +220,27 @@ def logs(
     """Show logs for a job."""
     jm = JobManager(region)
 
-    try:
-        job_name = _resolve_job_interactive(jm, hash, "view logs")
-    except JobNotFoundError as e:
-        print_error(str(e))
-        raise typer.Exit(code=1)
+    if hash is not None:
+        try:
+            job_name = _resolve_job_interactive(jm, hash, "view logs")
+        except JobNotFoundError as e:
+            print_error(str(e))
+            raise typer.Exit(code=1)
+    else:
+        # No hash — show interactive selection of running jobs only
+        try:
+            with console.status("[bold green]Fetching jobs...[/bold green]"):
+                structured = jm.get_jobs_structured()
+        except (ApiError, ClientLibMissingError) as e:
+            print_error(str(e))
+            raise typer.Exit(code=1)
+
+        running = [j for j in structured if j.get("status") == "Running"]
+        if not running:
+            console.print("[dim]No running jobs found.[/dim]")
+            raise typer.Exit()
+
+        job_name = interactive_job_select(running, "view logs")
 
     try:
         jm.show_logs(job_name, raw=raw)

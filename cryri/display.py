@@ -151,21 +151,25 @@ def render_jobs_table(jobs: List[Dict]) -> Table:
 
 
 def interactive_job_select(jobs: List[Dict], action: str) -> str:
-    console.print(f"\n[bold]Select a job to {action}:[/bold]\n")
+    from simple_term_menu import TerminalMenu
+
+    console.print(f"\n  [bold]Select a job to {action}:[/bold]")
+    options = []
     for job in jobs:
         status = job.get("status", "")
-        style = STATUS_STYLES.get(status, "")
-        console.print(
-            f"  [dim]{job['index']}.[/dim] [cyan]{job['job_name']}[/cyan]  [{style}]{status}[/{style}]"
-        )
-    console.print()
+        name = job.get("job_name", "")
+        created = _format_created_at(job.get("created_at", ""))
+        options.append(f"{name}  ({status})  {created}")
 
-    choice = IntPrompt.ask(
-        "Enter job number",
-        choices=[str(j["index"]) for j in jobs],
+    menu = TerminalMenu(
+        options,
+        menu_cursor_style=("fg_cyan", "bold"),
+        menu_highlight_style=("fg_cyan", "bold"),
     )
-    selected = next(j for j in jobs if j["index"] == choice)
-    return selected["job_name"]
+    idx = menu.show()
+    if idx is None:
+        raise SystemExit(0)
+    return jobs[idx]["job_name"]
 
 
 def print_success(msg: str) -> None:
