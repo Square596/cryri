@@ -51,22 +51,6 @@ def render_config_panel(cfg) -> Panel:
     return Panel(body, title="[bold cyan]Job Configuration[/bold cyan]", border_style="cyan")
 
 
-def render_build_image_panel(from_image: str, requirements_file: str,
-                             install_type: str, conda_env: str = None,
-                             poetrylock_file: str = None) -> Panel:
-    lines = [
-        f"[bold]Base image:[/bold]        {from_image}",
-        f"[bold]Requirements:[/bold]      {requirements_file}",
-        f"[bold]Install type:[/bold]      {install_type}",
-    ]
-    if conda_env:
-        lines.append(f"[bold]Conda env:[/bold]        {conda_env}")
-    if poetrylock_file:
-        lines.append(f"[bold]Poetry lock:[/bold]      {poetrylock_file}")
-
-    body = "\n".join(lines)
-    return Panel(body, title="[bold cyan]Image Build Configuration[/bold cyan]", border_style="cyan")
-
 
 def confirm_submission() -> bool:
     return Confirm.ask("[bold yellow]Submit this job?[/bold yellow]")

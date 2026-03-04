@@ -95,13 +95,6 @@ class JobManager:
             return client_lib.get_instance_types(regions=self.region)
         return api.get_instance_types(regions=self.region)
 
-    @staticmethod
-    def get_images(cluster_type: str = "MT"):
-        if api.use_legacy_backend():
-            client_lib = _require_client_lib()
-            return client_lib.get_docker_images(cluster_type)
-        return api.get_images(cluster_type=cluster_type)
-
     def show_logs(self, job_hash: str, raw: bool = False) -> None:
         # Try to resolve partial hash; fall back to using input directly
         try:
@@ -132,36 +125,3 @@ class JobManager:
 
         logging.info("Job %s terminated successfully", job_name)
         return job_name
-
-    @staticmethod
-    def build_image(from_image: str, requirements_file: str,
-                    install_type: str = "pip", conda_env: Optional[str] = None,
-                    poetrylock_file: Optional[str] = None) -> Dict:
-        if api.use_legacy_backend():
-            client_lib = _require_client_lib()
-            job = client_lib.ImageBuildJob(
-                from_image=from_image,
-                requirements_file=requirements_file,
-                install_type=install_type,
-                conda_env=conda_env,
-                poetrylock_file=poetrylock_file,
-            )
-            result = job.submit()
-            return {
-                "result": result,
-                "job_name": job.job_name,
-                "new_image": job.new_image,
-            }
-
-        data = api.build_image(
-            from_image=from_image,
-            requirements_file=requirements_file,
-            install_type=install_type,
-            conda_env=conda_env,
-            poetrylock_file=poetrylock_file,
-        )
-        return {
-            "result": "submitted",
-            "job_name": data.get("job_name", ""),
-            "new_image": data.get("new_image", ""),
-        }
