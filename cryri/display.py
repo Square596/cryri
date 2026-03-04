@@ -1,12 +1,15 @@
 import logging
+import re
 from typing import List, Dict
 
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
-from rich.prompt import Confirm, IntPrompt
+from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 from rich.text import Text
+
+_SECRET_KEY_RE = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD)", re.IGNORECASE)
 
 console = Console()
 
@@ -44,7 +47,13 @@ def render_config_panel(cfg) -> Panel:
     if c.environment:
         lines.append("[bold]Environment:[/bold]")
         for k, v in c.environment.items():
-            display_v = v if len(str(v)) <= 40 else str(v)[:37] + "..."
+            sv = str(v)
+            if _SECRET_KEY_RE.search(k):
+                display_v = sv[:4] + "****" if len(sv) > 4 else "****"
+            elif len(sv) > 40:
+                display_v = sv[:37] + "..."
+            else:
+                display_v = sv
             lines.append(f"  {k} = {display_v}")
 
     body = "\n".join(lines) if lines else "[dim]No configuration details[/dim]"
@@ -54,6 +63,27 @@ def render_config_panel(cfg) -> Panel:
 
 def confirm_submission() -> bool:
     return Confirm.ask("[bold yellow]Submit this job?[/bold yellow]")
+
+
+def prompt_text(label: str, default: str = None) -> str:
+    """Prompt for a text value with optional default."""
+    return Prompt.ask(f"  [bold]{label}[/bold]", default=default) or ""
+
+
+def prompt_env_vars() -> Dict[str, str]:
+    """Prompt for KEY=VALUE environment variables until empty input."""
+    console.print("  [bold]Environment variables[/bold] (KEY=VALUE, empty line to finish):")
+    env = {}
+    while True:
+        line = Prompt.ask("   ", default="")
+        if not line:
+            break
+        if "=" not in line:
+            console.print("    [dim]Skipping invalid entry (use KEY=VALUE format)[/dim]")
+            continue
+        key, value = line.split("=", 1)
+        env[key.strip()] = value.strip()
+    return env
 
 
 STATUS_STYLES = {

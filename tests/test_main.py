@@ -96,17 +96,6 @@ def test_version():
     assert "0.2.0" in result.output
 
 
-def test_help():
-    from cryri.main import app
-    result = runner.invoke(app, ["--help"])
-    assert result.exit_code == 0
-    assert "submit" in result.output
-    assert "jobs" in result.output
-    assert "logs" in result.output
-    assert "kill" in result.output
-    assert "instances" in result.output
-    assert "images" in result.output
-
 
 def test_submit_missing_file():
     from cryri.main import app

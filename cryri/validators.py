@@ -61,6 +61,7 @@ def sanitize_dir_path(p: Optional[str]) -> Optional[str]:
     p = Path(p).resolve()
 
     # assert path exists, can be accessed and is a directory
-    assert p.is_dir(), f'"{p}" is not a directory or path does not exist!'
+    if not p.is_dir():
+        raise ValueError(f'"{p}" is not a directory or path does not exist!')
 
     return str(p)

@@ -1,9 +1,11 @@
 import io
-import logging
+import shlex
 from typing import Optional, List, Dict
 from contextlib import redirect_stdout
 
 from cryri import api
+from cryri.config import CryConfig
+from cryri.utils import create_run_copy, create_job_description
 
 
 class JobNotFoundError(Exception):
@@ -95,14 +97,48 @@ class JobManager:
             return client_lib.get_instance_types(regions=self.region)
         return api.get_instance_types(regions=self.region)
 
-    def show_logs(self, job_hash: str, raw: bool = False) -> None:
-        # Try to resolve partial hash; fall back to using input directly
-        try:
-            full_name = self.find_job_by_hash(job_hash)
-        except Exception:
-            full_name = None
-        job_name = full_name or job_hash
+    def submit_run(self, cfg: CryConfig) -> str:
+        """Submit a job run with the given configuration."""
+        if cfg.container.run_from_copy:
+            if not cfg.container.cry_copy_dir:
+                raise ValueError(
+                    f"Copy dir is not set: {cfg.container.cry_copy_dir}"
+                )
+            cfg.container.work_dir = create_run_copy(cfg.container)
 
+        job_description = create_job_description(cfg)
+
+        run_script = f"bash -c {shlex.quote(f'cd {cfg.container.work_dir} && {cfg.container.command}')}"
+
+        if api.use_legacy_backend():
+            client_lib = _require_client_lib()
+            job = client_lib.Job(
+                base_image=cfg.container.image,
+                script=run_script,
+                instance_type=cfg.cloud.instance_type,
+                processes_per_worker=cfg.cloud.processes_per_worker,
+                n_workers=cfg.cloud.n_workers,
+                region=cfg.cloud.region,
+                type='binary',
+                env_variables=cfg.container.environment,
+                job_desc=job_description,
+            )
+            return job.submit()
+
+        result = api.submit_job(
+            script=run_script,
+            base_image=cfg.container.image,
+            instance_type=cfg.cloud.instance_type,
+            region=cfg.cloud.region,
+            n_workers=cfg.cloud.n_workers,
+            processes_per_worker=cfg.cloud.processes_per_worker,
+            env_variables=cfg.container.environment,
+            job_desc=job_description,
+        )
+        return result.get("job_name", str(result))
+
+    def show_logs(self, job_name: str, raw: bool = False) -> None:
+        """Stream logs for a job. Expects a resolved job_name."""
         if api.use_legacy_backend():
             client_lib = _require_client_lib()
             client_lib.logs(job_name, region=self.region)
@@ -110,18 +146,12 @@ class JobManager:
 
         api.stream_logs(job_name, region=self.region, raw=raw)
 
-    def kill_job(self, job_hash: str) -> str:
-        try:
-            full_name = self.find_job_by_hash(job_hash)
-        except Exception:
-            full_name = None
-        job_name = full_name or job_hash
-
+    def kill_job(self, job_name: str) -> str:
+        """Kill a running job. Expects a resolved job_name."""
         if api.use_legacy_backend():
             client_lib = _require_client_lib()
             client_lib.kill(job_name, region=self.region)
         else:
             api.kill_job(job_name, region=self.region)
 
-        logging.info("Job %s terminated successfully", job_name)
         return job_name

@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 
 import yaml
 from cryri.config import CryConfig
-from cryri.main import submit_run
+from cryri.job_manager import JobManager
 
 
 # Define the test configuration as a YAML string
@@ -38,7 +38,8 @@ def test_submit_run_executes_command(mock_submit_job, _mock_legacy):
     cfg = CryConfig(**config_dict)
 
     # Call the function under test
-    job_id = submit_run(cfg)
+    jm = JobManager(cfg.cloud.region)
+    job_id = jm.submit_run(cfg)
 
     # Assertions about the mock
     assert job_id == "test_job_id_123"
@@ -50,7 +51,7 @@ def test_submit_run_executes_command(mock_submit_job, _mock_legacy):
     # Extract the script command
     script_command = kwargs.get('script')
     assert script_command is not None
-    assert script_command.startswith('bash -c "cd ')
+    assert script_command.startswith("bash -c 'cd ")
 
     # Execute the script command using subprocess
     result = subprocess.run(

@@ -118,17 +118,17 @@ def test_sanitize_dir_path_none():
 
 @mock_path_resolution(cwd="/mock/dir", force_is_dir=False)
 def test_sanitize_dir_path_non_existing_dir():
-    with pytest.raises(AssertionError, match="does not exist"):
+    with pytest.raises(ValueError, match="does not exist"):
         sanitize_dir_path("non_existing_dir")
-    with pytest.raises(AssertionError, match="does not exist"):
+    with pytest.raises(ValueError, match="does not exist"):
         sanitize_dir_path("/path/to/non_existing_dir")
 
 
 @mock_path_resolution(cwd="/mock/dir", force_is_dir=make_is_dir_mock())
 def test_sanitize_dir_path_is_not_dir():
-    with pytest.raises(AssertionError, match="not a directory"):
+    with pytest.raises(ValueError, match="not a directory"):
         sanitize_dir_path("file.txt")
-    with pytest.raises(AssertionError, match="not a directory"):
+    with pytest.raises(ValueError, match="not a directory"):
         sanitize_dir_path("/path/to/config.yaml")
 
 

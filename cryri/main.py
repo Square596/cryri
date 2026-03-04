@@ -3,9 +3,9 @@ from typing import Optional
 import typer
 import yaml
 
-from cryri import __version__, api
+from cryri import __version__
 from cryri.api import ApiError
-from cryri.config import CryConfig, CloudConfig
+from cryri.config import CryConfig, CloudConfig, DEFAULT_REGION
 from cryri.display import (
     console,
     setup_logging,
@@ -15,9 +15,10 @@ from cryri.display import (
     interactive_job_select,
     print_success,
     print_error,
+    prompt_text,
+    prompt_env_vars,
 )
 from cryri.job_manager import JobManager, JobNotFoundError, ClientLibMissingError
-from cryri.utils import create_job_description, create_run_copy
 
 app = typer.Typer(no_args_is_help=True, rich_markup_mode="rich")
 
@@ -41,45 +42,96 @@ def callback(
     setup_logging()
 
 
-def submit_run(cfg: CryConfig) -> str:
-    """Submit a job run with the given configuration."""
-    if cfg.container.run_from_copy:
-        assert cfg.container.cry_copy_dir, \
-            f'Copy dir is not set: {cfg.container.cry_copy_dir}'
-        cfg.container.work_dir = create_run_copy(cfg.container)
+def _resolve_job_interactive(jm: JobManager, hash: Optional[str], action: str) -> str:
+    """Resolve a job name from a hash or via interactive selection."""
+    if hash is not None:
+        full_name = jm.find_job_by_hash(hash)
+        if full_name is None:
+            raise JobNotFoundError(f"No job found matching '{hash}'")
+        return full_name
 
-    job_description = create_job_description(cfg)
+    try:
+        with console.status("[bold green]Fetching jobs...[/bold green]"):
+            structured = jm.get_jobs_structured()
+    except (ApiError, ClientLibMissingError) as e:
+        print_error(str(e))
+        raise typer.Exit(code=1)
 
-    quoted_command = cfg.container.command.replace('"', '\\"')
-    run_script = f'bash -c "cd {cfg.container.work_dir} && {quoted_command}"'
+    if not structured:
+        console.print("[dim]No jobs found.[/dim]")
+        raise typer.Exit()
 
-    if api.use_legacy_backend():
-        from cryri.job_manager import _require_client_lib
-        client_lib = _require_client_lib()
-        job = client_lib.Job(
-            base_image=cfg.container.image,
-            script=run_script,
-            instance_type=cfg.cloud.instance_type,
-            processes_per_worker=cfg.cloud.processes_per_worker,
-            n_workers=cfg.cloud.n_workers,
-            region=cfg.cloud.region,
-            type='binary',
-            env_variables=cfg.container.environment,
-            job_desc=job_description,
-        )
-        return job.submit()
+    return interactive_job_select(structured, action)
 
-    result = api.submit_job(
-        script=run_script,
-        base_image=cfg.container.image,
-        instance_type=cfg.cloud.instance_type,
-        region=cfg.cloud.region,
-        n_workers=cfg.cloud.n_workers,
-        processes_per_worker=cfg.cloud.processes_per_worker,
-        env_variables=cfg.container.environment,
-        job_desc=job_description,
-    )
-    return result.get("job_name", str(result))
+
+@app.command()
+def init(
+    output: str = typer.Option("run.yaml", "--output", "-o", help="Output YAML file path."),
+):
+    """Interactive wizard to create a job config file."""
+    console.print("\n  [bold cyan]Welcome to cryri![/bold cyan] Let's set up your job.\n")
+
+    command = prompt_text("Command to run")
+    if not command:
+        print_error("Command is required.")
+        raise typer.Exit(code=1)
+
+    work_dir = prompt_text("Working directory", default=".")
+    instance_type = prompt_text("Instance type (leave blank to skip)")
+    image = prompt_text("Docker image (leave blank to skip)")
+    region = prompt_text("Region", default=DEFAULT_REGION)
+    description = prompt_text("Description (leave blank to skip)")
+    environment = prompt_env_vars()
+
+    # Build config dict — only include non-empty values
+    container = {"command": command}
+    if work_dir and work_dir != ".":
+        container["work_dir"] = work_dir
+    if image:
+        container["image"] = image
+    if environment:
+        container["environment"] = environment
+
+    cloud = {}
+    if region and region != DEFAULT_REGION:
+        cloud["region"] = region
+    if instance_type:
+        cloud["instance_type"] = instance_type
+    if description:
+        cloud["description"] = description
+
+    config_dict = {"container": container}
+    if cloud:
+        config_dict["cloud"] = cloud
+
+    # Build CryConfig for display
+    cfg = CryConfig(**{
+        "container": {**container, "work_dir": work_dir or "."},
+        "cloud": {**cloud, "region": region or DEFAULT_REGION},
+    })
+
+    console.print()
+    console.print(render_config_panel(cfg))
+    console.print()
+
+    save_path = prompt_text("Save config to", default=output)
+
+    with open(save_path, "w", encoding="utf-8") as f:
+        yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
+    print_success(f"Config saved to {save_path}")
+
+    if confirm_submission():
+        try:
+            jm = JobManager(cfg.cloud.region)
+            with console.status("[bold green]Submitting job...[/bold green]"):
+                status = jm.submit_run(cfg)
+            print_success(f"Job submitted: {status}")
+        except (ApiError, ClientLibMissingError) as e:
+            print_error(f"Failed to submit job: {e}")
+            raise typer.Exit(code=1)
+        except Exception as e:
+            print_error(f"Failed to submit job: {e}")
+            raise typer.Exit(code=1)
 
 
 @app.command()
@@ -109,8 +161,9 @@ def submit(
         raise typer.Exit()
 
     try:
+        jm = JobManager(cfg.cloud.region)
         with console.status("[bold green]Submitting job...[/bold green]"):
-            status = submit_run(cfg)
+            status = jm.submit_run(cfg)
         print_success(f"Job submitted: {status}")
     except (ApiError, ClientLibMissingError) as e:
         print_error(f"Failed to submit job: {e}")
@@ -122,7 +175,7 @@ def submit(
 
 @app.command()
 def jobs(
-    region: str = typer.Option("SR006", "--region", "-r", help="Cloud region."),
+    region: str = typer.Option(DEFAULT_REGION, "--region", "-r", help="Cloud region."),
 ):
     """List running jobs."""
     jm = JobManager(region)
@@ -143,31 +196,20 @@ def jobs(
 @app.command()
 def logs(
     hash: Optional[str] = typer.Argument(None, help="Job hash (interactive selection if omitted)."),
-    region: str = typer.Option("SR006", "--region", "-r", help="Cloud region."),
+    region: str = typer.Option(DEFAULT_REGION, "--region", "-r", help="Cloud region."),
     raw: bool = typer.Option(False, "--raw", help="Show raw unfiltered logs."),
 ):
     """Show logs for a job."""
     jm = JobManager(region)
 
-    if hash is None:
-        try:
-            with console.status("[bold green]Fetching jobs...[/bold green]"):
-                structured = jm.get_jobs_structured()
-        except (ApiError, ClientLibMissingError) as e:
-            print_error(str(e))
-            raise typer.Exit(code=1)
-
-        if not structured:
-            console.print("[dim]No jobs found.[/dim]")
-            raise typer.Exit()
-
-        hash = interactive_job_select(structured, "view logs")
-
     try:
-        jm.show_logs(hash, raw=raw)
+        job_name = _resolve_job_interactive(jm, hash, "view logs")
     except JobNotFoundError as e:
         print_error(str(e))
         raise typer.Exit(code=1)
+
+    try:
+        jm.show_logs(job_name, raw=raw)
     except (ApiError, ClientLibMissingError) as e:
         print_error(str(e))
         raise typer.Exit(code=1)
@@ -176,32 +218,21 @@ def logs(
 @app.command()
 def kill(
     hash: Optional[str] = typer.Argument(None, help="Job hash (interactive selection if omitted)."),
-    region: str = typer.Option("SR006", "--region", "-r", help="Cloud region."),
+    region: str = typer.Option(DEFAULT_REGION, "--region", "-r", help="Cloud region."),
 ):
     """Kill a running job."""
     jm = JobManager(region)
 
-    if hash is None:
-        try:
-            with console.status("[bold green]Fetching jobs...[/bold green]"):
-                structured = jm.get_jobs_structured()
-        except (ApiError, ClientLibMissingError) as e:
-            print_error(str(e))
-            raise typer.Exit(code=1)
-
-        if not structured:
-            console.print("[dim]No jobs found.[/dim]")
-            raise typer.Exit()
-
-        hash = interactive_job_select(structured, "kill")
-
     try:
-        with console.status("[bold green]Terminating job...[/bold green]"):
-            full_hash = jm.kill_job(hash)
-        print_success(f"Job {full_hash} terminated successfully.")
+        job_name = _resolve_job_interactive(jm, hash, "kill")
     except JobNotFoundError as e:
         print_error(str(e))
         raise typer.Exit(code=1)
+
+    try:
+        with console.status("[bold green]Terminating job...[/bold green]"):
+            jm.kill_job(job_name)
+        print_success(f"Job {job_name} terminated successfully.")
     except (ApiError, ClientLibMissingError) as e:
         print_error(str(e))
         raise typer.Exit(code=1)
@@ -209,7 +240,7 @@ def kill(
 
 @app.command()
 def instances(
-    region: str = typer.Option("SR006", "--region", "-r", help="Cloud region."),
+    region: str = typer.Option(DEFAULT_REGION, "--region", "-r", help="Cloud region."),
 ):
     """Show available instance types."""
     jm = JobManager(region)
