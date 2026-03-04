@@ -88,7 +88,7 @@ def _format_created_at(iso_str: str) -> str:
         dt = datetime.fromisoformat(iso_str)
         return dt.strftime("%b %d %H:%M")
     except (ValueError, TypeError):
-        return iso_str
+        return str(iso_str)
 
 
 def render_jobs_table(jobs: List[Dict]) -> Table:
@@ -104,7 +104,7 @@ def render_jobs_table(jobs: List[Dict]) -> Table:
         status_text = Text(status, style=style)
         table.add_row(
             str(job["index"]),
-            job["job_name"],
+            str(job["job_name"]),
             _format_created_at(job.get("created_at", "")),
             status_text,
         )
