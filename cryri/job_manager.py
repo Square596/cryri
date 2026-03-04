@@ -102,7 +102,7 @@ class JobManager:
             return client_lib.get_docker_images(cluster_type)
         return api.get_images(cluster_type=cluster_type)
 
-    def show_logs(self, job_hash: str) -> str:
+    def show_logs(self, job_hash: str) -> None:
         # Try to resolve partial hash; fall back to using input directly
         try:
             full_name = self.find_job_by_hash(job_hash)
@@ -112,14 +112,10 @@ class JobManager:
 
         if api.use_legacy_backend():
             client_lib = _require_client_lib()
-            buffer = io.StringIO()
-            with redirect_stdout(buffer):
-                client_lib.logs(job_name, region=self.region)
-            output = buffer.getvalue()
-            buffer.close()
-            return output
+            client_lib.logs(job_name, region=self.region)
+            return
 
-        return api.get_logs(job_name, region=self.region)
+        api.stream_logs(job_name, region=self.region)
 
     def kill_job(self, job_hash: str) -> str:
         try:

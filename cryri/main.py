@@ -164,9 +164,7 @@ def logs(
         hash = interactive_job_select(structured, "view logs")
 
     try:
-        with console.status("[bold green]Fetching logs...[/bold green]"):
-            output = jm.show_logs(hash)
-        console.print(output)
+        jm.show_logs(hash)
     except JobNotFoundError as e:
         print_error(str(e))
         raise typer.Exit(code=1)

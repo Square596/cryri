@@ -104,13 +104,13 @@ def list_jobs(region: Optional[str] = None) -> List[dict]:
     return jobs
 
 
-def get_logs(
+def stream_logs(
     job_name: str,
     region: Optional[str] = None,
     tail: int = 0,
     verbose: bool = True,
-) -> str:
-    """Read logs for a job. Returns collected log text."""
+) -> None:
+    """Stream logs for a job directly to stdout."""
     payload: Dict = {
         "job_name": job_name,
         "tail": tail,
@@ -126,11 +126,9 @@ def get_logs(
     )
     if resp.status_code != 200:
         raise ApiError(resp.status_code, resp.text)
-    lines = []
     for chunk in resp.iter_lines():
         if chunk:
-            lines.append(chunk.decode("utf-8"))
-    return "\n".join(lines)
+            print(chunk.decode("utf-8"))
 
 
 def kill_job(job_name: str, region: str) -> str:
