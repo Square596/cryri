@@ -187,10 +187,7 @@ def submit(
         with console.status("[bold green]Submitting job...[/bold green]"):
             status = jm.submit_run(cfg)
         print_success(f"Job submitted: {status}")
-    except (ApiError, ClientLibMissingError) as e:
-        print_error(f"Failed to submit job: {e}")
-        raise typer.Exit(code=1)
-    except Exception as e:
+    except (ApiError, ClientLibMissingError, ValueError) as e:
         print_error(f"Failed to submit job: {e}")
         raise typer.Exit(code=1)
 

@@ -13,7 +13,7 @@ authors = [
     { name = "Alexey Skrynnik" },
 ]
 dependencies = [
-    "pydantic",
+    "pydantic>=2.0",
     "requests",
     "rich",
     "pyyaml",

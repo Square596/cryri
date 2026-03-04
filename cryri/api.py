@@ -2,10 +2,16 @@
 
 import os
 import re
+import time
 from typing import Optional, List, Dict
 
 import requests
+from requests.exceptions import ConnectionError, Timeout
 from rich.table import Table
+
+_MAX_RETRIES = 3
+_RETRY_BACKOFF = 1  # seconds; doubles each retry
+_RETRYABLE_STATUS_CODES = {502, 503, 504}
 
 # Patterns for log cleaning
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*")
@@ -28,27 +34,66 @@ def use_legacy_backend() -> bool:
     return os.environ.get("CRYRI_USE_CLIENT_LIB", "").strip() == "1"
 
 
+def _require_env(name: str) -> str:
+    """Get a required environment variable or raise a clear error."""
+    value = os.environ.get(name)
+    if not value:
+        raise ApiError(0, f"Environment variable {name} is not set.")
+    return value
+
+
 def _get_namespace() -> str:
     """Resolve namespace from NAMESPACE env var, falling back to NB_PREFIX."""
     ns = os.environ.get("NAMESPACE")
     if ns:
         return ns
-    nb_prefix = os.environ["NB_PREFIX"]
-    ns = nb_prefix.split("/")[2]
-    if ns == "notebook":
-        return nb_prefix.split("/")[3]
+    nb_prefix = os.environ.get("NB_PREFIX")
+    if not nb_prefix:
+        raise ApiError(
+            0,
+            "Neither NAMESPACE nor NB_PREFIX environment variable is set. "
+            "Set NAMESPACE to your cloud namespace.",
+        )
+    parts = nb_prefix.split("/")
+    if len(parts) < 3:
+        raise ApiError(0, f"NB_PREFIX has unexpected format: {nb_prefix}")
+    ns = parts[2]
+    if ns == "notebook" and len(parts) >= 4:
+        return parts[3]
     return ns
 
 
 def _base_url() -> str:
-    return f"http://{os.environ['GWAPI_ADDR']}"
+    return f"http://{_require_env('GWAPI_ADDR')}"
 
 
 def _auth_headers() -> Dict[str, str]:
     return {
-        "X-Api-Key": os.environ["GWAPI_KEY"],
+        "X-Api-Key": _require_env("GWAPI_KEY"),
         "X-Namespace": _get_namespace(),
     }
+
+
+def _request(method: str, path: str, *, retries: int = _MAX_RETRIES, **kwargs) -> requests.Response:
+    """Make an HTTP request with automatic retry on transient failures."""
+    url = f"{_base_url()}{path}"
+    kwargs.setdefault("headers", _auth_headers())
+    kwargs.setdefault("timeout", 30)
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(retries + 1):
+        try:
+            resp = requests.request(method, url, **kwargs)
+            if resp.status_code not in _RETRYABLE_STATUS_CODES or attempt == retries:
+                return resp
+        except (ConnectionError, Timeout) as exc:
+            last_exc = exc
+            if attempt == retries:
+                raise ApiError(0, f"Request failed after {retries + 1} attempts: {exc}") from exc
+
+        time.sleep(_RETRY_BACKOFF * (2 ** attempt))
+
+    raise ApiError(0, f"Request failed after {retries + 1} attempts: {last_exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -82,12 +127,7 @@ def submit_job(
         "job_desc": job_desc,
         "flags": flags or {},
     }
-    resp = requests.post(
-        f"{_base_url()}/run_job",
-        json=payload,
-        headers=_auth_headers(),
-        timeout=30,
-    )
+    resp = _request("POST", "/run_job", json=payload)
     if resp.status_code != 200:
         raise ApiError(resp.status_code, resp.text)
     return resp.json()
@@ -98,12 +138,7 @@ def list_jobs(region: Optional[str] = None) -> List[dict]:
     payload: Dict = {}
     if region:
         payload["region"] = region
-    resp = requests.post(
-        f"{_base_url()}/job_list",
-        json=payload,
-        headers=_auth_headers(),
-        timeout=30,
-    )
+    resp = _request("POST", "/job_list", json=payload)
     if resp.status_code != 200:
         raise ApiError(resp.status_code, resp.text)
     jobs = resp.json()
@@ -127,12 +162,7 @@ def get_job_status(job_name: str, region: Optional[str] = None) -> str:
     payload = {"job_name": job_name}
     if region:
         payload["region"] = region
-    resp = requests.post(
-        f"{_base_url()}/job_status",
-        json=payload,
-        headers=_auth_headers(),
-        timeout=30,
-    )
+    resp = _request("POST", "/job_status", json=payload)
     if resp.status_code != 200:
         raise ApiError(resp.status_code, resp.text)
     return resp.json().get("job_status", "unknown")
@@ -152,39 +182,36 @@ def stream_logs(
         "verbose": verbose,
         "region": region,
     }
-    resp = requests.post(
-        f"{_base_url()}/read_logs",
-        json=payload,
-        headers=_auth_headers(),
-        stream=True,
-        timeout=(10, 120),
+    # No retry for streaming — use longer read timeout since training jobs
+    # can go quiet for minutes during evaluation/checkpointing.
+    resp = _request(
+        "POST", "/read_logs", json=payload,
+        stream=True, timeout=(10, 600), retries=0,
     )
     if resp.status_code != 200:
         raise ApiError(resp.status_code, resp.text)
-    prev_line = None
-    for chunk in resp.iter_lines():
-        if not chunk:
-            continue
-        line = chunk.decode("utf-8")
-        if raw:
-            print(line)
-            continue
-        cleaned = _clean_log_line(line)
-        if cleaned is None or cleaned == prev_line:
-            continue
-        prev_line = cleaned
-        print(cleaned)
+    try:
+        prev_line = None
+        for chunk in resp.iter_lines():
+            if not chunk:
+                continue
+            line = chunk.decode("utf-8")
+            if raw:
+                print(line)
+                continue
+            cleaned = _clean_log_line(line)
+            if cleaned is None or cleaned == prev_line:
+                continue
+            prev_line = cleaned
+            print(cleaned)
+    except Timeout:
+        raise ApiError(0, "Log stream timed out (no data for 10 minutes). The job may have finished.")
 
 
 def kill_job(job_name: str, region: str) -> str:
     """Kill a running job. Returns status message."""
     payload = {"job_name": job_name, "region": region}
-    resp = requests.post(
-        f"{_base_url()}/delete_job/v2",
-        json=payload,
-        headers=_auth_headers(),
-        timeout=30,
-    )
+    resp = _request("POST", "/delete_job/v2", json=payload)
     if resp.status_code != 200:
         raise ApiError(resp.status_code, resp.text)
     return resp.text
@@ -192,10 +219,7 @@ def kill_job(job_name: str, region: str) -> str:
 
 def get_instance_types(regions: str) -> Table:
     """Fetch instance types for the given region. Returns a ``rich.Table``."""
-    headers = _auth_headers()
-    base = _base_url()
-
-    resp = requests.get(f"{base}/v1/clusters", headers=headers, timeout=30)
+    resp = _request("GET", "/v1/clusters")
     if resp.status_code != 200:
         raise ApiError(resp.status_code, resp.text)
 
@@ -213,11 +237,7 @@ def get_instance_types(regions: str) -> Table:
         cluster_key = cluster.get("cluster_key", "")
         if regions and cluster_key != regions:
             continue
-        resp2 = requests.get(
-            f"{base}/v1/clusters/{cluster_key}/instance_types",
-            headers=headers,
-            timeout=30,
-        )
+        resp2 = _request("GET", f"/v1/clusters/{cluster_key}/instance_types")
         if resp2.status_code != 200:
             continue
         instance_types = resp2.json().get("instance_types", [])

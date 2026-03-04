@@ -109,7 +109,8 @@ class JobManager:
 
         job_description = create_job_description(cfg)
 
-        run_script = f"bash -c {shlex.quote(f'cd {cfg.container.work_dir} && {cfg.container.command}')}"
+        quoted_dir = shlex.quote(cfg.container.work_dir)
+        run_script = f"bash -c {shlex.quote(f'cd {quoted_dir} && {cfg.container.command}')}"
 
         if api.use_legacy_backend():
             client_lib = _require_client_lib()
@@ -152,7 +153,7 @@ class JobManager:
                 # Check job status to give a better error message
                 try:
                     status = api.get_job_status(job_name, region=self.region)
-                except Exception:
+                except ApiError:
                     status = "unknown"
                 raise ApiError(
                     400,
