@@ -264,11 +264,27 @@ def kill(
     """Kill a running job."""
     jm = JobManager(region)
 
-    try:
-        job_name = _resolve_job_interactive(jm, hash, "kill")
-    except JobNotFoundError as e:
-        print_error(str(e))
-        raise typer.Exit(code=1)
+    if hash is not None:
+        try:
+            job_name = _resolve_job_interactive(jm, hash, "kill")
+        except JobNotFoundError as e:
+            print_error(str(e))
+            raise typer.Exit(code=1)
+    else:
+        try:
+            with console.status("[bold green]Fetching jobs...[/bold green]"):
+                structured = jm.get_jobs_structured()
+        except (ApiError, ClientLibMissingError) as e:
+            print_error(str(e))
+            raise typer.Exit(code=1)
+
+        _FINISHED = {"Completed", "Failed"}
+        killable = [j for j in structured if j.get("status") not in _FINISHED]
+        if not killable:
+            console.print("[dim]No active jobs found.[/dim]")
+            raise typer.Exit()
+
+        job_name = interactive_job_select(killable, "kill")
 
     try:
         with console.status("[bold green]Terminating job...[/bold green]"):
