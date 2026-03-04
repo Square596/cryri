@@ -11,7 +11,7 @@ from rich.table import Table
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*")
 _MPI_PREFIX_RE = re.compile(r"^\[\d+,\d+\]<std(?:out|err)>:")
 _TQDM_RE = re.compile(r"\s*\d+%\|.*\|\s*\d+/\d+\s*\[.*\]")
-_NCCL_NOISE = ("NCCL INFO",)
+_NCCL_NOISE = ("NCCL INFO", "ptxas info", "bytes spill stores")
 
 
 class ApiError(Exception):
