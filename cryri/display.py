@@ -163,6 +163,7 @@ def interactive_job_select(jobs: List[Dict], action: str) -> str:
 
     menu = TerminalMenu(
         options,
+        cursor_index=len(options) - 1,
         menu_cursor_style=("fg_cyan", "bold"),
         menu_highlight_style=("fg_cyan", "bold"),
     )
