@@ -107,15 +107,17 @@ def list_jobs(region: Optional[str] = None) -> List[dict]:
 def get_logs(
     job_name: str,
     region: Optional[str] = None,
-    tail: int = 100,
+    tail: Optional[int] = None,
     verbose: bool = False,
 ) -> str:
     """Read logs for a job. Returns collected log text."""
     payload: Dict = {
         "job_name": job_name,
-        "tail": tail,
-        "verbose": verbose,
     }
+    if tail is not None:
+        payload["tail"] = tail
+    if verbose:
+        payload["verbose"] = verbose
     if region:
         payload["region"] = region
     resp = requests.post(

@@ -103,34 +103,39 @@ class JobManager:
         return api.get_images(cluster_type=cluster_type)
 
     def show_logs(self, job_hash: str) -> str:
-        full_hash = self.find_job_by_hash(job_hash)
-        if not full_hash:
-            raise JobNotFoundError(f"No job found with hash: {job_hash}")
+        # Try to resolve partial hash; fall back to using input directly
+        try:
+            full_name = self.find_job_by_hash(job_hash)
+        except Exception:
+            full_name = None
+        job_name = full_name or job_hash
 
         if api.use_legacy_backend():
             client_lib = _require_client_lib()
             buffer = io.StringIO()
             with redirect_stdout(buffer):
-                client_lib.logs(full_hash, region=self.region)
+                client_lib.logs(job_name, region=self.region)
             output = buffer.getvalue()
             buffer.close()
             return output
 
-        return api.get_logs(full_hash, region=self.region)
+        return api.get_logs(job_name, region=self.region)
 
     def kill_job(self, job_hash: str) -> str:
-        full_hash = self.find_job_by_hash(job_hash)
-        if not full_hash:
-            raise JobNotFoundError(f"No job found with hash: {job_hash}")
+        try:
+            full_name = self.find_job_by_hash(job_hash)
+        except Exception:
+            full_name = None
+        job_name = full_name or job_hash
 
         if api.use_legacy_backend():
             client_lib = _require_client_lib()
-            client_lib.kill(full_hash, region=self.region)
+            client_lib.kill(job_name, region=self.region)
         else:
-            api.kill_job(full_hash, region=self.region)
+            api.kill_job(job_name, region=self.region)
 
-        logging.info("Job %s terminated successfully", full_hash)
-        return full_hash
+        logging.info("Job %s terminated successfully", job_name)
+        return job_name
 
     @staticmethod
     def build_image(from_image: str, requirements_file: str,
