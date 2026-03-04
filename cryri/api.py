@@ -122,11 +122,15 @@ def get_logs(
         json=payload,
         headers=_auth_headers(),
         stream=True,
-        timeout=60,
+        timeout=(10, 120),
     )
     if resp.status_code != 200:
         raise ApiError(resp.status_code, resp.text)
-    return resp.text
+    lines = []
+    for chunk in resp.iter_lines():
+        if chunk:
+            lines.append(chunk.decode("utf-8"))
+    return "\n".join(lines)
 
 
 def kill_job(job_name: str, region: str) -> str:
