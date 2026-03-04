@@ -122,6 +122,22 @@ def _clean_log_line(line: str) -> Optional[str]:
     return line or None
 
 
+def get_job_status(job_name: str, region: Optional[str] = None) -> str:
+    """Get job status. Returns status string like 'Completed', 'Running', etc."""
+    payload = {"job_name": job_name}
+    if region:
+        payload["region"] = region
+    resp = requests.post(
+        f"{_base_url()}/job_status",
+        json=payload,
+        headers=_auth_headers(),
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        raise ApiError(resp.status_code, resp.text)
+    return resp.json().get("job_status", "unknown")
+
+
 def stream_logs(
     job_name: str,
     region: Optional[str] = None,

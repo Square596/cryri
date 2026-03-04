@@ -4,6 +4,7 @@ from typing import Optional, List, Dict
 from contextlib import redirect_stdout
 
 from cryri import api
+from cryri.api import ApiError
 from cryri.config import CryConfig
 from cryri.utils import create_run_copy, create_job_description
 
@@ -144,7 +145,21 @@ class JobManager:
             client_lib.logs(job_name, region=self.region)
             return
 
-        api.stream_logs(job_name, region=self.region, raw=raw)
+        try:
+            api.stream_logs(job_name, region=self.region, raw=raw)
+        except ApiError as e:
+            if e.status_code == 400:
+                # Check job status to give a better error message
+                try:
+                    status = api.get_job_status(job_name, region=self.region)
+                except Exception:
+                    status = "unknown"
+                raise ApiError(
+                    400,
+                    f"Cannot read logs for job '{job_name}' (status: {status}). "
+                    f"Logs may not be available for finished jobs.",
+                )
+            raise
 
     def kill_job(self, job_name: str) -> str:
         """Kill a running job. Expects a resolved job_name."""
