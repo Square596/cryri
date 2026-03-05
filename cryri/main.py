@@ -183,18 +183,17 @@ def status(
     """Show status of a single job."""
     jm = JobManager(region)
     try:
-        job_name = _resolve_job_interactive(jm, hash, "check status")
-    except JobNotFoundError as e:
-        print_error(str(e))
-        raise typer.Exit(code=1)
-
-    try:
-        job_status = jm.get_job_status(job_name)
+        with console.status("[bold green]Fetching jobs...[/bold green]"):
+            job = jm.find_job_with_status(hash)
     except (ApiError, ClientLibMissingError) as e:
         print_error(str(e))
         raise typer.Exit(code=1)
 
-    render_job_status(job_name, job_status)
+    if job is None:
+        print_error(f"No job found matching '{hash}'")
+        raise typer.Exit(code=1)
+
+    render_job_status(job["job_name"], job.get("status", "unknown"))
 
 
 @app.command()

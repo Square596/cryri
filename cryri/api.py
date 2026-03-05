@@ -229,9 +229,14 @@ def stream_logs_follow(
         except KeyboardInterrupt:
             return
 
-        # Check if job is still running
+        # Check if job is still running (use list_jobs — job_status endpoint is unreliable)
         try:
-            status = get_job_status(job_name, region=region)
+            jobs = list_jobs(region=region)
+            status = "unknown"
+            for j in jobs:
+                if j.get("job_name") == job_name:
+                    status = j.get("status", "unknown")
+                    break
         except ApiError:
             status = "unknown"
 

@@ -92,6 +92,13 @@ class JobManager:
                 return job["job_name"]
         return None
 
+    def find_job_with_status(self, partial_hash: str) -> Optional[Dict]:
+        """Find a job by partial hash match. Returns the full job dict (with status)."""
+        for job in self.get_jobs_structured():
+            if partial_hash in job["job_name"]:
+                return job
+        return None
+
     def get_instance_types(self):
         if api.use_legacy_backend():
             client_lib = _require_client_lib()
@@ -163,8 +170,11 @@ class JobManager:
             raise
 
     def get_job_status(self, job_name: str) -> str:
-        """Get status of a single job."""
-        return api.get_job_status(job_name, region=self.region)
+        """Get status of a single job from the jobs list."""
+        for job in self.get_jobs_structured():
+            if job["job_name"] == job_name:
+                return job.get("status", "unknown")
+        return "unknown"
 
     def show_logs_follow(self, job_name: str, raw: bool = False) -> None:
         """Stream logs with auto-reconnect until job finishes."""
