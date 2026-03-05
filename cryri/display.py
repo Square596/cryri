@@ -183,3 +183,10 @@ def print_error(msg: str) -> None:
 
 def print_warning(msg: str) -> None:
     console.print(f"[bold yellow]{msg}[/bold yellow]")
+
+
+def render_job_status(job_name: str, status: str) -> None:
+    """Print a single job's status with color styling."""
+    style = STATUS_STYLES.get(status, "")
+    status_text = Text(status, style=style)
+    console.print(Text.assemble(job_name, "  ", status_text))

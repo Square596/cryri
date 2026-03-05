@@ -208,6 +208,44 @@ def stream_logs(
         raise ApiError(0, "Log stream timed out (no data for 10 minutes). The job may have finished.")
 
 
+_FINISHED_STATUSES = {"Completed", "Failed", "Error", "Killed"}
+_FOLLOW_RECONNECT_DELAY = 5  # seconds
+
+
+def stream_logs_follow(
+    job_name: str,
+    region: Optional[str] = None,
+    raw: bool = False,
+) -> None:
+    """Stream logs with auto-reconnect. Stops when job reaches a terminal status."""
+    first = True
+    while True:
+        try:
+            tail = 0 if first else 100
+            first = False
+            stream_logs(job_name, region=region, tail=tail, raw=raw)
+        except (ApiError, ConnectionError, Timeout):
+            pass
+        except KeyboardInterrupt:
+            return
+
+        # Check if job is still running
+        try:
+            status = get_job_status(job_name, region=region)
+        except ApiError:
+            status = "unknown"
+
+        if status in _FINISHED_STATUSES:
+            from cryri.display import render_job_status
+            render_job_status(job_name, status)
+            return
+
+        try:
+            time.sleep(_FOLLOW_RECONNECT_DELAY)
+        except KeyboardInterrupt:
+            return
+
+
 def kill_job(job_name: str, region: str) -> str:
     """Kill a running job. Returns status message."""
     payload = {"job_name": job_name, "region": region}

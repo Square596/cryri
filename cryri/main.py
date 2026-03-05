@@ -1,5 +1,7 @@
+import re
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 import yaml
@@ -14,6 +16,7 @@ from cryri.display import (
     render_config_panel,
     confirm_submission,
     render_jobs_table,
+    render_job_status,
     interactive_job_select,
     print_success,
     print_error,
@@ -64,6 +67,22 @@ def _resolve_job_interactive(jm: JobManager, hash: Optional[str], action: str) -
         raise typer.Exit()
 
     return interactive_job_select(structured, action)
+
+
+_SINCE_RE = re.compile(r"^(\d+)([mhd])$")
+
+
+def _parse_since(value: str) -> datetime:
+    """Parse a --since value into a datetime cutoff.
+
+    Accepts relative durations like '30m', '2h', '1d' or ISO date strings.
+    """
+    m = _SINCE_RE.match(value.strip())
+    if m:
+        amount, unit = int(m.group(1)), m.group(2)
+        delta = {"m": timedelta(minutes=amount), "h": timedelta(hours=amount), "d": timedelta(days=amount)}[unit]
+        return datetime.now() - delta
+    return datetime.fromisoformat(value)
 
 
 @app.command()
@@ -157,10 +176,36 @@ def init(
 
 
 @app.command()
+def status(
+    hash: str = typer.Argument(..., help="Job hash (or partial match)."),
+    region: str = typer.Option(DEFAULT_REGION, "--region", "-r", help="Cloud region."),
+):
+    """Show status of a single job."""
+    jm = JobManager(region)
+    try:
+        job_name = _resolve_job_interactive(jm, hash, "check status")
+    except JobNotFoundError as e:
+        print_error(str(e))
+        raise typer.Exit(code=1)
+
+    try:
+        job_status = jm.get_job_status(job_name)
+    except (ApiError, ClientLibMissingError) as e:
+        print_error(str(e))
+        raise typer.Exit(code=1)
+
+    render_job_status(job_name, job_status)
+
+
+@app.command()
 def submit(
     config_file: str = typer.Argument(..., help="Path to the YAML configuration file."),
     region: Optional[str] = typer.Option(None, "--region", "-r", help="Cloud region override."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt (for CI)."),
+    command: Optional[str] = typer.Option(None, "--command", "-c", help="Override command."),
+    instance: Optional[str] = typer.Option(None, "--instance", "-i", help="Override instance type."),
+    env: Optional[List[str]] = typer.Option(None, "--env", "-e", help="Override env var (KEY=VALUE, repeatable)."),
+    workers: Optional[int] = typer.Option(None, "--workers", "-w", help="Override number of workers."),
 ):
     """Submit a job from a YAML config file."""
     try:
@@ -175,6 +220,21 @@ def submit(
 
     if region:
         cfg.cloud.region = region
+    if command is not None:
+        cfg.container.command = command
+    if instance is not None:
+        cfg.cloud.instance_type = instance
+    if workers is not None:
+        cfg.cloud.n_workers = workers
+    if env:
+        if cfg.container.environment is None:
+            cfg.container.environment = {}
+        for item in env:
+            if "=" not in item:
+                print_error(f"Invalid env format (expected KEY=VALUE): {item}")
+                raise typer.Exit(code=1)
+            k, v = item.split("=", 1)
+            cfg.container.environment[k.strip()] = v.strip()
 
     console.print(render_config_panel(cfg))
 
@@ -196,6 +256,8 @@ def submit(
 def jobs(
     region: str = typer.Option(DEFAULT_REGION, "--region", "-r", help="Cloud region."),
     limit: int = typer.Option(10, "--limit", "-n", help="Number of latest jobs to show (0 for all)."),
+    status_filter: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status (case-insensitive)."),
+    since: Optional[str] = typer.Option(None, "--since", help="Filter by time (e.g. 30m, 2h, 1d, or ISO date)."),
 ):
     """List running jobs."""
     jm = JobManager(region)
@@ -208,6 +270,38 @@ def jobs(
 
     if not structured:
         console.print("[dim]No jobs found.[/dim]")
+        raise typer.Exit()
+
+    # Apply --status filter
+    if status_filter:
+        sf = status_filter.lower()
+        structured = [j for j in structured if sf in j.get("status", "").lower()]
+
+    # Apply --since filter
+    if since:
+        try:
+            cutoff = _parse_since(since)
+        except ValueError:
+            print_error(f"Invalid --since value: {since}  (use e.g. 30m, 2h, 1d, or ISO date)")
+            raise typer.Exit(code=1)
+        filtered = []
+        for j in structured:
+            ca = j.get("created_at", "")
+            if not ca:
+                continue
+            try:
+                if isinstance(ca, (int, float)):
+                    job_dt = datetime.fromtimestamp(ca)
+                else:
+                    job_dt = datetime.fromisoformat(str(ca))
+                if job_dt >= cutoff:
+                    filtered.append(j)
+            except (ValueError, TypeError, OSError):
+                pass
+        structured = filtered
+
+    if not structured:
+        console.print("[dim]No jobs match the given filters.[/dim]")
         raise typer.Exit()
 
     total = len(structured)
@@ -223,6 +317,7 @@ def logs(
     hash: Optional[str] = typer.Argument(None, help="Job hash (interactive selection if omitted)."),
     region: str = typer.Option(DEFAULT_REGION, "--region", "-r", help="Cloud region."),
     raw: bool = typer.Option(False, "--raw", help="Show raw unfiltered logs."),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow logs, reconnecting until job finishes."),
 ):
     """Show logs for a job."""
     jm = JobManager(region)
@@ -250,7 +345,10 @@ def logs(
         job_name = interactive_job_select(running, "view logs")
 
     try:
-        jm.show_logs(job_name, raw=raw)
+        if follow:
+            jm.show_logs_follow(job_name, raw=raw)
+        else:
+            jm.show_logs(job_name, raw=raw)
     except (ApiError, ClientLibMissingError) as e:
         print_error(str(e))
         raise typer.Exit(code=1)

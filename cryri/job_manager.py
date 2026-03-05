@@ -162,6 +162,14 @@ class JobManager:
                 )
             raise
 
+    def get_job_status(self, job_name: str) -> str:
+        """Get status of a single job."""
+        return api.get_job_status(job_name, region=self.region)
+
+    def show_logs_follow(self, job_name: str, raw: bool = False) -> None:
+        """Stream logs with auto-reconnect until job finishes."""
+        api.stream_logs_follow(job_name, region=self.region, raw=raw)
+
     def kill_job(self, job_name: str) -> str:
         """Kill a running job. Expects a resolved job_name."""
         if api.use_legacy_backend():
