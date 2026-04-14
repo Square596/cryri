@@ -87,7 +87,7 @@ def build_script(commands: List[str], parallel: int, work_dir: str) -> str:
 
 
 def create_batch_script_file(work_dir: str, commands: List[str], parallel: int) -> str:
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     script_name = f"{timestamp}_{os.getpid()}.sh"
 
     scripts_dir = Path(work_dir) / ".cryri" / "batch_scripts"
